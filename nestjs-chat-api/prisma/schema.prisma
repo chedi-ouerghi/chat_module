@@ -1,0 +1,102 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum CallType {
+  AUDIO
+  VIDEO
+}
+
+enum CallStatus {
+  PENDING
+  ONGOING
+  ENDED
+  REJECTED
+  MISSED
+}
+
+model User {
+  id                  String  @id @default(cuid())
+  email               String  @unique
+  firstName           String?
+  password            String
+  isResettingPassword Boolean @default(false)
+  resetPasswordToken  String? @unique
+
+  conversations   Conversation[]
+  sentMessages    ChatMessage[]
+  stripeAccountId String?        @unique
+  stripeProductId String?        @unique
+
+  givenDonations    Donation[] @relation("givingUser")
+  receivedDonations Donation[] @relation("receivingUser")
+
+  outgoingCalls ChatCall[] @relation("caller")
+  incomingCalls ChatCall[] @relation("receiver")
+}
+
+model Conversation {
+  id        String        @id @default(cuid())
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  users     User[]
+  messages  ChatMessage[]
+  calls     ChatCall[]
+}
+
+model ChatMessage {
+  id           String       @id @default(cuid())
+  content      String
+  createdAt    DateTime     @default(now())
+  sender       User         @relation(fields: [senderId], references: [id])
+  senderId     String
+  conversation Conversation @relation(fields: [chatId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  chatId       String
+
+  @@index([chatId])
+  @@index([senderId])
+}
+
+model Donation {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  stripeProductId String
+  stripePriceId   String   @unique
+
+  givingUser   User   @relation("givingUser", fields: [givingUserId], references: [id])
+  givingUserId String
+
+  receivingUser   User   @relation("receivingUser", fields: [receivingUserId], references: [id])
+  receivingUserId String
+  // Amount is in cents
+  amount          Int?
+
+  @@index([givingUserId])
+  @@index([receivingUserId])
+}
+
+model ChatCall {
+  id           String       @id @default(cuid())
+  type         CallType
+  status       CallStatus   @default(PENDING)
+  createdAt    DateTime     @default(now())
+  endedAt      DateTime?
+  caller       User         @relation("caller", fields: [callerId], references: [id])
+  callerId     String
+  receiver     User         @relation("receiver", fields: [receiverId], references: [id])
+  receiverId   String
+  conversation Conversation @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId       String
+
+  @@index([chatId])
+  @@index([callerId])
+  @@index([receiverId])
+}
