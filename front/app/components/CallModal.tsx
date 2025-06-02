@@ -52,32 +52,48 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
 useEffect(() => {
   const initializeCall = async () => {
     try {
-    if (!navigator.mediaDevices?.getUserMedia) {
-  throw new Error('WebRTC non supporté');
-}
-
-      if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
-        throw new Error('WebRTC requiert HTTPS sauf en local');
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('WebRTC non supporté');
       }
 
+      // Arrêter tous les tracks existants avant d'en créer de nouveaux
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
+      if (remoteStream) {
+        remoteStream.getTracks().forEach(track => track.stop());
+      }
+      
+      // Reset streams
+      setLocalStream(null);
+      setRemoteStream(null);
+
       const mediaConstraints = {
-        video: call.type === 'VIDEO',
+        video: call.type === 'VIDEO' ? {
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } : false,
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
-        },
+          autoGainControl: true
+        }
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      
+      // Vérifier si le composant est toujours monté
+      let isMounted = true;
+      if (!isMounted) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+
       stream.getAudioTracks().forEach(track => (track.enabled = !isMuted));
       setLocalStream(stream);
 
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
-        localVideoRef.current.onloadedmetadata = () => {
-          localVideoRef.current?.play().catch(console.error);
-        };
       }
 
       const pc = new RTCPeerConnection({
@@ -131,20 +147,33 @@ useEffect(() => {
 
     } catch (err: any) {
       console.error('Erreur WebRTC:', err);
-      alert("Erreur d'accès micro/caméra. Autorise le navigateur.");
+      if (err.name === 'NotReadableError') {
+        alert("La caméra ou le microphone est déjà utilisé par une autre application. Veuillez fermer les autres applications utilisant ces périphériques.");
+      } else {
+        alert("Erreur d'accès aux périphériques. Veuillez vérifier les permissions.");
+      }
       onClose();
     }
   };
 
+  // Délai plus long pour s'assurer que les ressources précédentes sont libérées
   const timeoutId = setTimeout(() => {
     initializeCall();
-  }, 100);
+  }, 500);
 
   return () => {
     clearTimeout(timeoutId);
-    localStream?.getTracks().forEach((track) => track.stop());
-    remoteStream?.getTracks().forEach((track) => track.stop());
-    peerConnection.current?.close();
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+    }
+    if (remoteStream) {
+      remoteStream.getTracks().forEach(track => track.stop());
+    }
+    if (peerConnection.current) {
+      peerConnection.current.close();
+    }
+    setLocalStream(null);
+    setRemoteStream(null);
   };
 }, []);
 

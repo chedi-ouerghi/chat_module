@@ -1,8 +1,7 @@
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
-
-const WEBSOCKET_URL = 'wss://5a29-196-203-166-66.ngrok-free.app';
+import { useEnv } from '~/root';
 
 const context = createContext<{ socket: Socket | null }>({ socket: null });
 
@@ -11,10 +10,15 @@ export const useSocket = () => {
 };
 
 export const SocketProvider = ({ children }: { children: ReactNode }) => {
+	const { WEBSOCKET_URL } = useEnv();
 	const [socket, setSocket] = useState<Socket | null>();
 	const [isSocketConnected, setIsSocketConnected] = useState<boolean>(false);
+
 	useEffect(() => {
-		const createdSocket = io(WEBSOCKET_URL);
+		const createdSocket = io(WEBSOCKET_URL, {
+			withCredentials: true,
+			transports: ['websocket', 'polling'],
+		});
 		setSocket(createdSocket);
 		if (!createdSocket) return;
 
@@ -35,7 +39,7 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
 			createdSocket.off('confirmation', handleConfirmation);
 			createdSocket.off('disconnect', handleDisconnect);
 		};
-	}, []);
+	}, [WEBSOCKET_URL]);
 	return (
 		<context.Provider
 			value={{

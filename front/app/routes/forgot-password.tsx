@@ -16,7 +16,7 @@ import { Icons } from '~/components/icons.tsx';
 import { Button, buttonVariants } from '~/components/ui/button.tsx';
 import { Input } from '~/components/ui/input.tsx';
 
-const BACKEND_URL = ' https://3705-196-203-166-66.ngrok-free.app/ ';
+const BACKEND_URL = ' http://localhost:8020 ';
 
 const actionSchema = z.object({
 	action: z.enum(['request-password-reset', 'reset-password']),

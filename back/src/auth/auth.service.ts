@@ -14,13 +14,26 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
   ) {}
+  private authenticateUser({ userId }: UserPayload) {
+    const payload: UserPayload = { userId };
+    return {
+      error: false,
+      message: 'Connexion réussie',
+      access_token: this.jwtService.sign(payload),
+    };
+  }
+
   async login({ authBody }: { authBody: LogUserDto }) {
     try {
       const { email, password } = authBody;
 
       const existingUser = await this.prisma.user.findUnique({
-        where: {
-          email,
+        where: { email },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          password: true,
         },
       });
 
@@ -36,9 +49,19 @@ export class AuthService {
       if (!isPasswordValid) {
         throw new Error('Le mot de passe est invalide.');
       }
-      return this.authenticateUser({
+
+      const auth = this.authenticateUser({
         userId: existingUser.id,
       });
+
+      return {
+        ...auth,
+        user: {
+          id: existingUser.id,
+          email: existingUser.email,
+          firstName: existingUser.firstName,
+        },
+      };
     } catch (error) {
       return { error: true, message: error.message };
     }
@@ -92,13 +115,6 @@ export class AuthService {
   }) {
     const isPasswordValid = await compare(password, hashedPassword);
     return isPasswordValid;
-  }
-
-  private authenticateUser({ userId }: UserPayload) {
-    const payload: UserPayload = { userId };
-    return {
-      access_token: this.jwtService.sign(payload),
-    };
   }
 
   async resetUserPasswordRequest({ email }: { email: string }) {

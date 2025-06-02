@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { fetcher } from './server/utils.server.ts';
 import { getUserToken, logout } from './session.server.ts';
 
-const BACKEND_URL = ' https://3705-196-203-166-66.ngrok-free.app/ ';
+const BACKEND_URL ='http://localhost:8020';
 
 const getAuthenticatedUserSchema = z.object({
 	email: z.string(),

@@ -43,13 +43,18 @@ export const authenticateUser = async ({
 	request: Request;
 	userToken: string;
 }) => {
-	const createdSession = await commitUserToken({
-		request,
-		userToken,
-	});
-	return redirect('/', {
-		headers: {
-			'Set-Cookie': createdSession,
-		},
-	});
+	try {
+		const session = await getSession(request.headers.get('Cookie'));
+		session.set('userToken', userToken);
+		const createdSession = await commitSession(session);
+
+		return redirect('/', {
+			headers: {
+				'Set-Cookie': createdSession,
+			},
+		});
+	} catch (error) {
+		console.error('Authentication error:', error);
+		throw new Error('Erreur lors de l\'authentification');
+	}
 };

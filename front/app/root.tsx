@@ -29,8 +29,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 	const user = await getOptionalUser({ request });
 	const env = envSchema.parse({
 		// BACKEND_URL: process.env.BACKEND_URL,
-		WEBSOCKET_URL: process.env.WEBSOCKET_URL ?? 'wss://5a29-196-203-166-66.ngrok-free.app',
-		BACKEND_URL: process.env.BACKEND_URL ?? ' https://3705-196-203-166-66.ngrok-free.app/ ', // Mise à jour du port
+		WEBSOCKET_URL: process.env.WEBSOCKET_URL ?? 'http://localhost:8020',
+		BACKEND_URL: process.env.BACKEND_URL ?? ' http://localhost:8020 ', // Mise à jour du port
 	});
 	return json({ user, env });
 };

@@ -13,11 +13,11 @@ import { UserModule } from './user/user.module';
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema: Joi.object({
-        PORT: Joi.number().default(8000),
+        PORT: Joi.number().default(8020),
         DATABASE_URL: Joi.string().required(),
         JWT_SECRET: Joi.string().required(),
-        STRIPE_SECRET_KEY: Joi.string().required(),
-        STRIPE_WEBHOOK_SECRET: Joi.string().required(),
+        STRIPE_SECRET_KEY: Joi.string().optional().allow(''),
+        STRIPE_WEBHOOK_SECRET: Joi.string().optional().allow(''),
       }),
     }),
     UserModule,

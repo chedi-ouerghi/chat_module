@@ -1,6 +1,6 @@
 import { getUserToken } from '~/session.server.ts';
 
-const BACKEND_URL = ' https://3705-196-203-166-66.ngrok-free.app/ ';
+const BACKEND_URL = process.env.BACKEND_URL;
 
 export const fetcher = async ({
 	url,
@@ -15,7 +15,11 @@ export const fetcher = async ({
 }) => {
 	try {
 		const userToken = await getUserToken({ request });
-		const fullUrl = `${BACKEND_URL}${url}`;
+		const baseUrl = process.env.BACKEND_URL || 'http://localhost:8020';
+		// S'assurer que l'URL est bien formatée et enlever les double slashes
+		const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
+		const cleanPath = url.replace(/^\/+/, '');
+		const fullUrl = `${cleanBaseUrl}/${cleanPath}`;
 		
 		const response = await fetch(fullUrl, {
 			method,
@@ -26,12 +30,12 @@ export const fetcher = async ({
 			},
 		});
 
-		const responseData = await response.json();
-
 		if (!response.ok) {
-			throw new Error(responseData.message || 'Une erreur est survenue');
+			console.error('API Error:', response.status, response.statusText);
+			throw new Error(`HTTP error! status: ${response.status}`);
 		}
 
+		const responseData = await response.json();
 		return responseData;
 	} catch (error) {
 		console.error('Fetch error:', error);

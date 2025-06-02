@@ -54,7 +54,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 	return json({});
 };
 
-const BACKEND_URL = ' https://3705-196-203-166-66.ngrok-free.app/ ';
+const BACKEND_URL = 'http://localhost:8020';
 
 export const action = async ({ request }: ActionFunctionArgs) => {
 	try {

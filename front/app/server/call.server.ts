@@ -34,6 +34,6 @@ export const handleCallAction = async ({
   return await fetcher({
     method: 'POST',
     request,
-    url: ` https://3705-196-203-166-66.ngrok-free.app//chat/calls/${callId}/${action}`,
+    url: ` http://localhost:8020/chat/calls/${callId}/${action}`,
   });
 };

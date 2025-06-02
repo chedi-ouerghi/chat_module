@@ -26,17 +26,37 @@ const loginSchema = z.object({
 	password: z.string(),
 });
 
-const BACKEND_URL = ' https://3705-196-203-166-66.ngrok-free.app/ ';
+const BACKEND_URL ='http://localhost:8020';
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-	const user = await getOptionalUser({ request });
-	if (user) {
-		const users = await getUsers({ request });
-		const conversations = await getConversations({ request });
-		return json({ conversations, users });
+	try {
+		const user = await getOptionalUser({ request });
+		if (user) {
+			try {
+				console.log('Fetching users and conversations...');
+				const users = await getUsers({ request });
+				console.log('Users fetched:', users);
+				const conversations = await getConversations({ request });
+				console.log('Conversations fetched:', conversations);
+				return json({ conversations, users, error: null });
+			} catch (error) {
+				console.error('Error fetching data:', error);
+				return json({ 
+					conversations: [], 
+					users: [], 
+					error: 'Erreur lors du chargement des données' 
+				});
+			}
+		}
+		return json({ conversations: [], users: [], error: null });
+	} catch (error) {
+		console.error('Loader error:', error);
+		return json({ 
+			conversations: [], 
+			users: [], 
+			error: 'Erreur lors du chargement des données' 
+		});
 	}
-
-	return json({ conversations: [], users: [] });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -55,6 +75,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 		const data = await response.json();
 
+		if (!response.ok) {
+			return json<ActionFeedback>({
+				error: true,
+				message: data.message || 'Identifiants invalides',
+			});
+		}
+
 		if (data.access_token) {
 			return await authenticateUser({
 				request,
@@ -64,13 +91,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 		return json<ActionFeedback>({
 			error: true,
-			message: data.message || 'Identifiants invalides',
+			message: 'Erreur lors de la connexion',
 		});
 	} catch (error) {
+		console.error('Login error:', error);
 		return json<ActionFeedback>({
 			error: true,
-			message:
-				error instanceof Error ? error.message : 'Une erreur est survenue',
+			message: error instanceof Error ? error.message : 'Une erreur est survenue',
 		});
 	}
 };

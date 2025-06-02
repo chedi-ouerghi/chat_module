@@ -1,11 +1,11 @@
 import { Global, OnModuleInit } from '@nestjs/common';
 import {
-  ConnectedSocket,
-  MessageBody,
-  OnGatewayInit,
-  SubscribeMessage,
-  WebSocketGateway,
-  WebSocketServer,
+    ConnectedSocket,
+    MessageBody,
+    OnGatewayInit,
+    SubscribeMessage,
+    WebSocketGateway,
+    WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { SocketService } from './socket/socket.service';
@@ -14,8 +14,13 @@ import { CallType } from '@prisma/client';
 import { CreateCallDto } from './chat/dto/create-call.dto';
 
 @Global()
-@WebSocketGateway(8001, {
-  cors: '*',
+@WebSocketGateway({
+  cors: {
+    origin: 'http://localhost:3000',
+    credentials: true,
+  },
+  namespace: '/',
+  port: 8020,
 })
 export class AppGateway implements OnGatewayInit, OnModuleInit {
   @WebSocketServer()
