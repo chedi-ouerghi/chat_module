@@ -245,6 +245,32 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     }
   };
 
+  // Ajouter un effet pour surveiller la qualité de la connexion
+  useEffect(() => {
+    if (!peerConnection.current) return;
+
+    const checkConnectionQuality = () => {
+      const pc = peerConnection.current;
+      if (!pc) return;
+
+      pc.getStats().then(stats => {
+        stats.forEach(report => {
+          if (report.type === "candidate-pair" && report.state === "succeeded") {
+            const rtt = report.currentRoundTripTime;
+            if (rtt) {
+              if (rtt < 0.1) setConnectionQuality('good');
+              else if (rtt < 0.3) setConnectionQuality('medium');
+              else setConnectionQuality('poor');
+            }
+          }
+        });
+      });
+    };
+
+    const interval = setInterval(checkConnectionQuality, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-gray-900 to-black backdrop-blur-lg flex items-center justify-center z-50">
       <div className={cn(
@@ -252,7 +278,7 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
         "border border-white/10 backdrop-blur-md transition-all duration-300",
         isFullscreen ? "h-screen max-w-full m-0 rounded-none" : "h-auto m-4"
       )}>
-        {/* Header */}
+        {/* Header avec indicateur de qualité de connexion */}
         <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/40 to-transparent z-10">
           <div className="flex items-center gap-4">
             <div className="flex flex-col">
@@ -265,7 +291,11 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
                   connectionQuality === 'good' ? "bg-green-500" : 
                   connectionQuality === 'medium' ? "bg-yellow-500" : "bg-red-500"
                 )} />
-                <span className="text-sm text-white/70">{formatTime(elapsedTime)}</span>
+                <span className="text-sm text-white/70">
+                  {connectionQuality === 'good' ? 'Excellente connexion' :
+                   connectionQuality === 'medium' ? 'Connexion moyenne' : 'Mauvaise connexion'}
+                </span>
+                <span className="text-sm text-white/70 ml-2">{formatTime(elapsedTime)}</span>
               </div>
             </div>
           </div>
