@@ -49,133 +49,149 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     }
   }, [remoteStream]);
 
-useEffect(() => {
-  const initializeCall = async () => {
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('WebRTC non supporté');
-      }
+  useEffect(() => {
+    const initializeCall = async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('WebRTC non supporté');
+        }
 
-      // Arrêter tous les tracks existants avant d'en créer de nouveaux
+        // Clean up previous streams
+        if (localStream) {
+          localStream.getTracks().forEach(track => track.stop());
+        }
+        if (remoteStream) {
+          remoteStream.getTracks().forEach(track => track.stop());
+        }
+
+        // Configuration audio optimisée
+        const mediaConstraints = {
+          video: call.type === 'VIDEO' ? {
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          } : false,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 48000,
+            channelCount: 2
+          }
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+        setLocalStream(stream);
+
+        // Configuration du local video
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+          await localVideoRef.current.play().catch(console.error);
+        }
+
+        // Configuration WebRTC améliorée
+        const pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+          ],
+          iceTransportPolicy: 'all',
+          bundlePolicy: 'max-bundle',
+          rtcpMuxPolicy: 'require',
+          // Optimisations audio
+          sdpSemantics: 'unified-plan'
+        });
+
+        // Ajout des tracks avec priorité audio
+        stream.getTracks().forEach(track => {
+          const sender = pc.addTrack(track, stream);
+          if (track.kind === 'audio') {
+            sender.setParameters({
+              ...sender.getParameters(),
+              degradationPreference: 'maintain-quality'
+            });
+          }
+        });
+
+        // Gestion améliorée des tracks distants
+        pc.ontrack = async (event) => {
+          const [stream] = event.streams;
+          setRemoteStream(stream);
+
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = stream;
+            
+            // Assurer que l'audio est activé
+            remoteVideoRef.current.muted = false;
+            remoteVideoRef.current.volume = 1.0;
+            
+            try {
+              await remoteVideoRef.current.play();
+              
+              // Vérification audio explicite
+              if (event.track.kind === 'audio') {
+                event.track.onunmute = () => {
+                  console.log('Audio track unmuted');
+                  event.track.enabled = true;
+                };
+              }
+            } catch (err) {
+              console.error('Erreur lecture audio:', err);
+            }
+          }
+
+          if (event.track.kind === 'video') {
+            setIsVideoConnected(true);
+          }
+        };
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket?.emit('webrtc-signal', {
+              callId: call.id,
+              signal: { type: 'ice-candidate', candidate: event.candidate },
+              targetUserId: isInitiator ? call.receiverId : call.callerId,
+            });
+          }
+        };
+
+        peerConnection.current = pc;
+
+        if (isInitiator) {
+          const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: call.type === 'VIDEO',
+            voiceActivityDetection: true
+          });
+          await pc.setLocalDescription(offer);
+          socket?.emit('webrtc-signal', {
+            callId: call.id,
+            signal: { type: 'offer', sdp: offer },
+            targetUserId: call.receiverId,
+          });
+        }
+
+      } catch (err) {
+        console.error('Erreur WebRTC:', err);
+        onClose();
+      }
+    };
+
+    const timeoutId = setTimeout(initializeCall, 500);
+    return () => {
+      clearTimeout(timeoutId);
       if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
       }
       if (remoteStream) {
         remoteStream.getTracks().forEach(track => track.stop());
       }
-      
-      // Reset streams
+      if (peerConnection.current) {
+        peerConnection.current.close();
+      }
       setLocalStream(null);
       setRemoteStream(null);
-
-      const mediaConstraints = {
-        video: call.type === 'VIDEO' ? {
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        } : false,
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-      
-      // Vérifier si le composant est toujours monté
-      let isMounted = true;
-      if (!isMounted) {
-        stream.getTracks().forEach(track => track.stop());
-        return;
-      }
-
-      stream.getAudioTracks().forEach(track => (track.enabled = !isMuted));
-      setLocalStream(stream);
-
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-        ],
-      });
-
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
-
-      pc.ontrack = (event) => {
-        const [stream] = event.streams;
-        stream.getAudioTracks().forEach(track => (track.enabled = isSpeakerOn));
-        setRemoteStream(stream);
-
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = stream;
-          remoteVideoRef.current.onloadedmetadata = () => {
-            remoteVideoRef.current?.play().catch(console.error);
-          };
-        }
-
-        if (event.track.kind === 'video') setIsVideoConnected(true);
-      };
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket?.emit('webrtc-signal', {
-            callId: call.id,
-            signal: { type: 'ice-candidate', candidate: event.candidate },
-            targetUserId: isInitiator ? call.receiverId : call.callerId,
-          });
-        }
-      };
-
-      peerConnection.current = pc;
-
-      if (isInitiator) {
-        const offer = await pc.createOffer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: call.type === 'VIDEO',
-        });
-        await pc.setLocalDescription(offer);
-        socket?.emit('webrtc-signal', {
-          callId: call.id,
-          signal: { type: 'offer', sdp: offer },
-          targetUserId: call.receiverId,
-        });
-      }
-
-    } catch (err: any) {
-      console.error('Erreur WebRTC:', err);
-      if (err.name === 'NotReadableError') {
-        alert("La caméra ou le microphone est déjà utilisé par une autre application. Veuillez fermer les autres applications utilisant ces périphériques.");
-      } else {
-        alert("Erreur d'accès aux périphériques. Veuillez vérifier les permissions.");
-      }
-      onClose();
-    }
-  };
-
-  // Délai plus long pour s'assurer que les ressources précédentes sont libérées
-  const timeoutId = setTimeout(() => {
-    initializeCall();
-  }, 500);
-
-  return () => {
-    clearTimeout(timeoutId);
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-    }
-    if (remoteStream) {
-      remoteStream.getTracks().forEach(track => track.stop());
-    }
-    if (peerConnection.current) {
-      peerConnection.current.close();
-    }
-    setLocalStream(null);
-    setRemoteStream(null);
-  };
-}, []);
+    };
+  }, []);
 
 
   useEffect(() => {
@@ -218,16 +234,22 @@ useEffect(() => {
 
   const toggleMute = () => {
     if (localStream) {
-      localStream.getAudioTracks().forEach(track => {
-        track.enabled = isMuted;
+      const audioTracks = localStream.getAudioTracks();
+      audioTracks.forEach(track => {
+        track.enabled = !track.enabled;
+        console.log('Audio track enabled:', track.enabled);
       });
       setIsMuted(!isMuted);
     }
   };
 
   const toggleSpeaker = () => {
-    if (remoteVideoRef.current) {
+    if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.muted = !isSpeakerOn;
+      const audioTracks = remoteStream.getAudioTracks();
+      audioTracks.forEach(track => {
+        track.enabled = !isSpeakerOn;
+      });
       setIsSpeakerOn(!isSpeakerOn);
     }
   };
