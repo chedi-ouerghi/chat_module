@@ -56,91 +56,105 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
           throw new Error('WebRTC non supporté');
         }
 
-        // Clean up previous streams
-        if (localStream) {
-          localStream.getTracks().forEach(track => track.stop());
-        }
-        if (remoteStream) {
-          remoteStream.getTracks().forEach(track => track.stop());
-        }
-
-        // Configuration audio optimisée
+        // Configuration optimisée pour la vidéo et l'audio
         const mediaConstraints = {
           video: call.type === 'VIDEO' ? {
             width: { ideal: 1280 },
-            height: { ideal: 720 }
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 }
           } : false,
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: 48000,
-            channelCount: 2
+            autoGainControl: true
           }
         };
 
         const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
         setLocalStream(stream);
 
-        // Configuration du local video
+        // Configuration locale
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
           await localVideoRef.current.play().catch(console.error);
         }
 
-        // Configuration WebRTC améliorée
+        // Configuration améliorée WebRTC
         const pc = new RTCPeerConnection({
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
+            { 
+              urls: 'turn:turn.example.com:3478',
+              username: 'webrtc',
+              credential: 'turnserver'
+            }
           ],
-          iceTransportPolicy: 'all',
-          bundlePolicy: 'max-bundle',
-          rtcpMuxPolicy: 'require',
-          // Optimisations audio
-          sdpSemantics: 'unified-plan'
+          iceCandidatePoolSize: 10
         });
 
-        // Ajout des tracks avec priorité audio
+        // Ajout des tracks avec priorité
         stream.getTracks().forEach(track => {
-          const sender = pc.addTrack(track, stream);
-          if (track.kind === 'audio') {
-            sender.setParameters({
-              ...sender.getParameters(),
-              degradationPreference: 'maintain-quality'
-            });
-          }
+          pc.addTrack(track, stream);
         });
 
         // Gestion améliorée des tracks distants
         pc.ontrack = async (event) => {
-          const [stream] = event.streams;
-          setRemoteStream(stream);
-
+          console.log(`Track reçu de type: ${event.track.kind}`);
+          
+          const [remoteMediaStream] = event.streams;
+          setRemoteStream(remoteMediaStream);
+          
           if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = stream;
-            
-            // Assurer que l'audio est activé
+            remoteVideoRef.current.srcObject = remoteMediaStream;
             remoteVideoRef.current.muted = false;
-            remoteVideoRef.current.volume = 1.0;
+            remoteVideoRef.current.volume = 1;
             
             try {
               await remoteVideoRef.current.play();
+              console.log('Lecture distante démarrée');
               
-              // Vérification audio explicite
-              if (event.track.kind === 'audio') {
-                event.track.onunmute = () => {
-                  console.log('Audio track unmuted');
-                  event.track.enabled = true;
-                };
+              if (event.track.kind === 'video') {
+                setIsVideoConnected(true);
               }
             } catch (err) {
-              console.error('Erreur lecture audio:', err);
+              console.error('Erreur lecture média distant:', err);
             }
           }
+        };
 
-          if (event.track.kind === 'video') {
-            setIsVideoConnected(true);
+        // Surveillance de l'état de la connexion
+        pc.oniceconnectionstatechange = () => {
+          console.log('État ICE:', pc.iceConnectionState);
+          if (pc.iceConnectionState === 'failed') {
+            pc.restartIce();
+          }
+        };
+
+        // Amélioration de la négociation
+        pc.onnegotiationneeded = async () => {
+          try {
+            if (isInitiator) {
+              const offer = await pc.createOffer({
+                offerToReceiveAudio: true,
+                offerToReceiveVideo: call.type === 'VIDEO'
+              });
+              
+              // Optimisation SDP pour l'audio
+              if (offer.sdp) {
+                offer.sdp = offer.sdp
+                  .replace(/(a=fmtp:111.*\r\n)/g, '$1a=fmtp:111 stereo=1;sprop-stereo=1\r\n')
+                  .replace(/(m=audio .*\r\n)/g, '$1a=rtpmap:111 opus/48000/2\r\n');
+              }
+              
+              await pc.setLocalDescription(offer);
+              socket?.emit('webrtc-signal', {
+                callId: call.id,
+                signal: { type: 'offer', sdp: offer },
+                targetUserId: call.receiverId
+              });
+            }
+          } catch (err) {
+            console.error('Erreur négociation:', err);
           }
         };
 
@@ -156,40 +170,23 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
 
         peerConnection.current = pc;
 
-        if (isInitiator) {
-          const offer = await pc.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: call.type === 'VIDEO',
-            voiceActivityDetection: true
-          });
-          await pc.setLocalDescription(offer);
-          socket?.emit('webrtc-signal', {
-            callId: call.id,
-            signal: { type: 'offer', sdp: offer },
-            targetUserId: call.receiverId,
-          });
-        }
-
       } catch (err) {
-        console.error('Erreur WebRTC:', err);
+        console.error('Erreur initialisation WebRTC:', err);
         onClose();
       }
     };
 
-    const timeoutId = setTimeout(initializeCall, 500);
+    initializeCall();
+
     return () => {
-      clearTimeout(timeoutId);
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-      }
-      if (remoteStream) {
-        remoteStream.getTracks().forEach(track => track.stop());
-      }
       if (peerConnection.current) {
         peerConnection.current.close();
       }
-      setLocalStream(null);
-      setRemoteStream(null);
+      [localStream, remoteStream].forEach(stream => {
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+        }
+      });
     };
   }, []);
 
@@ -232,24 +229,25 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Amélioration des contrôles audio
   const toggleMute = () => {
     if (localStream) {
-      const audioTracks = localStream.getAudioTracks();
-      audioTracks.forEach(track => {
-        track.enabled = !track.enabled;
-        console.log('Audio track enabled:', track.enabled);
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = isMuted;
+        console.log('Audio local:', track.enabled ? 'actif' : 'muet');
       });
       setIsMuted(!isMuted);
     }
   };
 
   const toggleSpeaker = () => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.muted = !isSpeakerOn;
-      const audioTracks = remoteStream.getAudioTracks();
-      audioTracks.forEach(track => {
+    if (remoteStream) {
+      remoteStream.getAudioTracks().forEach(track => {
         track.enabled = !isSpeakerOn;
       });
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.muted = !isSpeakerOn;
+      }
       setIsSpeakerOn(!isSpeakerOn);
     }
   };
