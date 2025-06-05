@@ -2,14 +2,14 @@ import { cssBundleHref } from '@remix-run/css-bundle';
 import type { LinksFunction, LoaderFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import {
-	Link,
-	Links,
-	LiveReload,
-	Meta,
-	Outlet,
-	Scripts,
-	ScrollRestoration,
-	useRouteLoaderData,
+    Link,
+    Links,
+    LiveReload,
+    Meta,
+    Outlet,
+    Scripts,
+    ScrollRestoration,
+    useRouteLoaderData,
 } from '@remix-run/react';
 import { z } from 'zod';
 import tailwindCss from '~/global.css';
@@ -29,8 +29,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 	const user = await getOptionalUser({ request });
 	const env = envSchema.parse({
 		// BACKEND_URL: process.env.BACKEND_URL,
-		WEBSOCKET_URL: process.env.WEBSOCKET_URL ?? 'http://localhost:8020',
-		BACKEND_URL: process.env.BACKEND_URL ?? ' http://localhost:8020 ', // Mise à jour du port
+		WEBSOCKET_URL: process.env.WEBSOCKET_URL ?? 'https://chat-module-2.onrender.com',
+		BACKEND_URL: process.env.BACKEND_URL ?? ' https://chat-module-2.onrender.com ', // Mise à jour du port
 	});
 	return json({ user, env });
 };

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { fetcher } from './server/utils.server.ts';
 import { getUserToken, logout } from './session.server.ts';
 
-const BACKEND_URL ='http://localhost:8020';
+const BACKEND_URL ='https://chat-module-2.onrender.com';
 
 const getAuthenticatedUserSchema = z.object({
 	email: z.string(),

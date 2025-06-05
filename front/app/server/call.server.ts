@@ -34,6 +34,6 @@ export const handleCallAction = async ({
   return await fetcher({
     method: 'POST',
     request,
-    url: ` http://localhost:8020/chat/calls/${callId}/${action}`,
+    url: ` https://chat-module-2.onrender.com/chat/calls/${callId}/${action}`,
   });
 };

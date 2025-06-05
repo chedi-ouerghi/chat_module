@@ -15,7 +15,7 @@ export const fetcher = async ({
 }) => {
 	try {
 		const userToken = await getUserToken({ request });
-		const baseUrl = process.env.BACKEND_URL || 'http://localhost:8020';
+		const baseUrl = process.env.BACKEND_URL || 'https://chat-module-2.onrender.com';
 		// S'assurer que l'URL est bien formatée et enlever les double slashes
 		const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
 		const cleanPath = url.replace(/^\/+/, '');

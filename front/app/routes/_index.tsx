@@ -2,11 +2,11 @@ import { Label } from '@radix-ui/react-label';
 import type { ActionFunctionArgs, LoaderFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import {
-	Form,
-	Link,
-	useActionData,
-	useLoaderData,
-	useNavigation,
+    Form,
+    Link,
+    useActionData,
+    useLoaderData,
+    useNavigation,
 } from '@remix-run/react';
 import { z } from 'zod';
 import { getOptionalUser } from '~/auth.server.ts';
@@ -26,7 +26,7 @@ const loginSchema = z.object({
 	password: z.string(),
 });
 
-const BACKEND_URL ='http://localhost:8020';
+const BACKEND_URL ='https://chat-module-2.onrender.com';
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 	try {

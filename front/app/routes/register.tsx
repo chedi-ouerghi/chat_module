@@ -54,7 +54,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 	return json({});
 };
 
-const BACKEND_URL = 'http://localhost:8020';
+const BACKEND_URL = 'https://chat-module-2.onrender.com';
 
 export const action = async ({ request }: ActionFunctionArgs) => {
 	try {

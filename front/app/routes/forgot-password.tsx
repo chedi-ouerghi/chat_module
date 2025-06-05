@@ -2,11 +2,11 @@ import { Label } from '@radix-ui/react-label';
 import type { ActionFunctionArgs, LoaderFunctionArgs } from '@remix-run/node';
 import { json, redirect } from '@remix-run/node';
 import {
-	Form,
-	Link,
-	useActionData,
-	useLoaderData,
-	useNavigation,
+    Form,
+    Link,
+    useActionData,
+    useLoaderData,
+    useNavigation,
 } from '@remix-run/react';
 import { z } from 'zod';
 import { getOptionalUser } from '~/auth.server.ts';
@@ -16,7 +16,7 @@ import { Icons } from '~/components/icons.tsx';
 import { Button, buttonVariants } from '~/components/ui/button.tsx';
 import { Input } from '~/components/ui/input.tsx';
 
-const BACKEND_URL = ' http://localhost:8020 ';
+const BACKEND_URL = ' https://chat-module-2.onrender.com ';
 
 const actionSchema = z.object({
 	action: z.enum(['request-password-reset', 'reset-password']),
