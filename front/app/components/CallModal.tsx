@@ -8,18 +8,19 @@ import { cn } from '~/lib/utils';
 export const CallModal = ({ call, onClose }: CallModalProps) => {
   const { socket } = useSocket();
   const user = useUser();
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
-  const peerConnection = useRef<RTCPeerConnection | null>(null);
-  const isInitiator = call.callerId === user.id;
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [isVideoConnected, setIsVideoConnected] = useState(false);
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'medium' | 'poor'>('good');
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Garantir que les refs sont toujours disponibles
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const peerConnection = useRef<RTCPeerConnection | null>(null);
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -70,59 +71,87 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     }
   }, [remoteStream]);
 
-  useEffect(() => {
-    const initializeWebRTC = async () => {
-      try {
-        console.log('Initialisation WebRTC...');
-        const pc = new RTCPeerConnection({
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
-        });
+  // Initialisation WebRTC séparée
+  const initializePeerConnection = () => {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
+    });
 
-        console.log('Demande d\'accès aux périphériques...');
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: call.type === 'VIDEO' ? {
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          } : false,
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true
+    pc.oniceconnectionstatechange = () => {
+      console.log('ICE State:', pc.iceConnectionState);
+    };
+
+    pc.ontrack = (event) => {
+      console.log('Track received:', event.track.kind);
+      if (event.streams && event.streams[0]) {
+        setRemoteStream(event.streams[0]);
+        if (event.track.kind === 'video') {
+          setIsVideoConnected(true);
+        }
+      }
+    };
+
+    return pc;
+  };
+
+  // Gestion des médias
+  const startLocalMedia = async () => {
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: call.type === 'VIDEO',
+        audio: true
+      });
+      
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = mediaStream;
+      }
+      
+      return mediaStream;
+    } catch (err) {
+      console.error('Media error:', err);
+      throw err;
+    }
+  };
+
+  // Effect principal
+  useEffect(() => {
+    let localMediaStream: MediaStream | null = null;
+    
+    const initialize = async () => {
+      try {
+        // 1. Créer la connexion peer
+        const pc = initializePeerConnection();
+        peerConnection.current = pc;
+
+        // 2. Démarrer les médias locaux
+        localMediaStream = await startLocalMedia();
+        setLocalStream(localMediaStream);
+
+        // 3. Ajouter les tracks au peer connection
+        localMediaStream.getTracks().forEach(track => {
+          if (localMediaStream) {
+            pc.addTrack(track, localMediaStream);
           }
         });
 
-        console.log('Flux local capturé:', mediaStream);
-        console.log('Tracks vidéo:', mediaStream.getVideoTracks());
-        console.log('Tracks audio:', mediaStream.getAudioTracks());
-
-        setLocalStream(mediaStream);
-
-        // Ajout des tracks avec logs
-        mediaStream.getTracks().forEach(track => {
-          console.log(`Ajout track ${track.kind} au peer connection`);
-          pc.addTrack(track, mediaStream);
-        });
-
-        pc.ontrack = (event) => {
-          console.log('Événement ontrack:', event);
-          console.log('Type de track reçu:', event.track.kind);
+        // 4. Configurer la signalisation
+        if (isInitiator) {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
           
-          const [remoteMediaStream] = event.streams;
-          console.log('Flux distant reçu:', remoteMediaStream);
-          
-          setRemoteStream(remoteMediaStream);
-          setIsVideoConnected(event.track.kind === 'video');
+          socket?.emit('webrtc-signal', {
+            callId: call.id,
+            signal: { type: 'offer', sdp: offer },
+            targetUserId: call.receiverId
+          });
+        }
 
-          event.track.onunmute = () => {
-            console.log(`Track ${event.track.kind} activé`);
-          };
-        };
-
+        // 5. Gérer les candidats ICE
         pc.onicecandidate = ({ candidate }) => {
           if (candidate) {
-            console.log('Nouveau candidat ICE:', candidate);
             socket?.emit('webrtc-signal', {
               callId: call.id,
               signal: { type: 'ice-candidate', candidate },
@@ -130,73 +159,36 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
             });
           }
         };
-
-        pc.oniceconnectionstatechange = () => {
-          console.log('État de la connexion ICE:', pc.iceConnectionState);
-          if (pc.iceConnectionState === 'failed') {
-            console.log('Tentative de reconnexion ICE...');
-            pc.restartIce();
-          }
-        };
-
-        pc.onnegotiationneeded = async () => {
-          if (isInitiator) {
-            try {
-              const offer = await pc.createOffer({
-                offerToReceiveAudio: true,
-                offerToReceiveVideo: call.type === 'VIDEO'
-              });
-              await pc.setLocalDescription(offer);
-              
-              socket?.emit('webrtc-signal', {
-                callId: call.id,
-                signal: { type: 'offer', sdp: offer },
-                targetUserId: call.receiverId
-              });
-            } catch (err) {
-              console.error('Error creating offer:', err);
-            }
-          }
-        };
-
-        peerConnection.current = pc;
-
       } catch (err) {
-        console.error('Erreur lors de l\'initialisation WebRTC:', err);
-        alert('Erreur d\'accès aux périphériques. Vérifiez les permissions.');
+        console.error('Setup error:', err);
         onClose();
       }
     };
 
-    initializeWebRTC();
-    
+    initialize();
+
+    // Cleanup
     return () => {
-      console.log('Nettoyage des ressources WebRTC...');
+      if (localMediaStream) {
+        localMediaStream.getTracks().forEach(track => track.stop());
+      }
       if (peerConnection.current) {
         peerConnection.current.close();
-      }
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-      }
-      if (remoteStream) {
-        remoteStream.getTracks().forEach(track => track.stop());
       }
     };
   }, []);
 
-  // Amélioration de la gestion des signaux WebRTC
+  // Gestion des signaux
   useEffect(() => {
     if (!socket || !peerConnection.current) return;
 
     const handleSignal = async (data: any) => {
-      console.log('Signal WebRTC reçu:', data.signal.type);
       const pc = peerConnection.current;
       if (!pc) return;
 
       try {
         switch (data.signal.type) {
           case 'offer':
-            console.log('Traitement de l\'offre:', data.signal.sdp);
             await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
@@ -206,27 +198,28 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
               targetUserId: isInitiator ? call.receiverId : call.callerId
             });
             break;
-
           case 'answer':
-            console.log('Traitement de la réponse:', data.signal.sdp);
             await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
             break;
-
           case 'ice-candidate':
-            console.log('Ajout du candidat ICE:', data.signal.candidate);
-            if (pc.remoteDescription) {
-              await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
-            }
+            await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
             break;
         }
       } catch (err) {
-        console.error('Erreur traitement signal:', err);
+        console.error('Signal error:', err);
       }
     };
 
     socket.on('webrtc-signal', handleSignal);
     return () => socket.off('webrtc-signal', handleSignal);
   }, [socket]);
+
+  // Effect pour la gestion du flux distant
+  useEffect(() => {
+    if (remoteStream && remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
