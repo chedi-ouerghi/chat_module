@@ -81,8 +81,9 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     }
   }, [remoteStream]);
 
-  // Initialisation WebRTC séparée
+  // Amélioration du monitoring WebRTC
   const initializePeerConnection = () => {
+    console.log('Initialisation PeerConnection...');
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -90,18 +91,44 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
       ]
     });
 
-    pc.oniceconnectionstatechange = () => {
-      console.log('ICE State:', pc.iceConnectionState);
+    // Monitoring des états de connexion
+    pc.onconnectionstatechange = () => {
+      console.log('Connection state:', pc.connectionState);
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log('ICE Connection state:', pc.iceConnectionState);
+    };
+
+    pc.onicegatheringstatechange = () => {
+      console.log('ICE Gathering state:', pc.iceGatheringState);
+    };
+
+    pc.onsignalingstatechange = () => {
+      console.log('Signaling state:', pc.signalingState);
+    };
+
+    // Gestion améliorée des tracks
     pc.ontrack = (event) => {
-      console.log('Track received:', event.track.kind);
-      if (event.streams && event.streams[0]) {
-        setRemoteStream(event.streams[0]);
+      console.log('Track reçu:', event.track.kind);
+      console.log('Track enabled:', event.track.enabled);
+      console.log('Track ID:', event.track.id);
+      
+      const [remoteMediaStream] = event.streams;
+      console.log('Remote stream tracks:', remoteMediaStream.getTracks());
+
+      setRemoteStream(remoteMediaStream);
+      
+      event.track.onunmute = () => {
+        console.log(`Track ${event.track.kind} unmuted`);
         if (event.track.kind === 'video') {
           setIsVideoConnected(true);
         }
-      }
+      };
+
+      event.track.onended = () => {
+        console.log(`Track ${event.track.kind} ended`);
+      };
     };
 
     return pc;
@@ -110,18 +137,36 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
   // Gestion des médias
   const startLocalMedia = async () => {
     try {
+      console.log('Demande accès médias...');
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: call.type === 'VIDEO',
-        audio: true
+        video: call.type === 'VIDEO' ? {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 }
+        } : false,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
       });
-      
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = mediaStream;
-      }
-      
+
+      console.log('Médias locaux obtenus:', {
+        videoTracks: mediaStream.getVideoTracks().length,
+        audioTracks: mediaStream.getAudioTracks().length
+      });
+
+      mediaStream.getTracks().forEach(track => {
+        console.log(`Track local ${track.kind}:`, {
+          id: track.id,
+          enabled: track.enabled,
+          muted: track.muted
+        });
+      });
+
       return mediaStream;
     } catch (err) {
-      console.error('Media error:', err);
+      console.error('Erreur accès médias:', err);
       throw err;
     }
   };
@@ -188,35 +233,50 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     };
   }, []);
 
-  // Gestion des signaux
+  // Amélioration de la gestion des signaux
   useEffect(() => {
     if (!socket || !peerConnection.current) return;
 
     const handleSignal = async (data: any) => {
+      console.log('Signal reçu:', data.signal.type);
       const pc = peerConnection.current;
       if (!pc) return;
 
       try {
         switch (data.signal.type) {
           case 'offer':
+            console.log('Traitement offre...');
             await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+            console.log('Remote description set');
+            
             const answer = await pc.createAnswer();
+            console.log('Answer created');
+            
             await pc.setLocalDescription(answer);
+            console.log('Local description set');
+            
             socket.emit('webrtc-signal', {
               callId: call.id,
               signal: { type: 'answer', sdp: answer },
               targetUserId: isInitiator ? call.receiverId : call.callerId
             });
             break;
+
           case 'answer':
+            console.log('Traitement réponse...');
             await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+            console.log('Remote description set (answer)');
             break;
+
           case 'ice-candidate':
-            await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+            if (pc.remoteDescription) {
+              console.log('Ajout ICE candidate');
+              await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+            }
             break;
         }
       } catch (err) {
-        console.error('Signal error:', err);
+        console.error('Erreur traitement signal:', err);
       }
     };
 
@@ -224,12 +284,37 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     return () => socket.off('webrtc-signal', handleSignal);
   }, [socket]);
 
-  // Effect pour la gestion du flux distant
+  // Vérification périodique des tracks
   useEffect(() => {
-    if (remoteStream && remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = remoteStream;
-    }
-  }, [remoteStream]);
+    const interval = setInterval(() => {
+      if (localStream) {
+        console.log('État tracks locaux:', {
+          video: localStream.getVideoTracks().map(t => ({
+            enabled: t.enabled,
+            muted: t.muted
+          })),
+          audio: localStream.getAudioTracks().map(t => ({
+            enabled: t.enabled,
+            muted: t.muted
+          }))
+        });
+      }
+      if (remoteStream) {
+        console.log('État tracks distants:', {
+          video: remoteStream.getVideoTracks().map(t => ({
+            enabled: t.enabled,
+            muted: t.muted
+          })),
+          audio: remoteStream.getAudioTracks().map(t => ({
+            enabled: t.enabled,
+            muted: t.muted
+          }))
+        });
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [localStream, remoteStream]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
