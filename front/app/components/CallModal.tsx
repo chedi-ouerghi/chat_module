@@ -56,128 +56,100 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
           throw new Error('WebRTC non supporté');
         }
 
-        // Configuration optimisée pour la vidéo et l'audio
+        // Configuration vidéo optimisée
         const mediaConstraints = {
           video: call.type === 'VIDEO' ? {
             width: { ideal: 1280 },
             height: { ideal: 720 },
-            frameRate: { ideal: 30 }
+            frameRate: { min: 20, ideal: 30 }
           } : false,
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
+          audio: true
         };
 
         const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
         setLocalStream(stream);
 
-        // Configuration locale
+        // Configurer la vidéo locale immédiatement
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
-          await localVideoRef.current.play().catch(console.error);
+          localVideoRef.current.play().catch(console.error);
         }
 
-        // Configuration améliorée WebRTC
         const pc = new RTCPeerConnection({
           iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { 
-              urls: 'turn:turn.example.com:3478',
-              username: 'webrtc',
-              credential: 'turnserver'
-            }
-          ],
-          iceCandidatePoolSize: 10
+            { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] }
+          ]
         });
 
-        // Ajout des tracks avec priorité
+        // Ajouter les pistes locales
         stream.getTracks().forEach(track => {
+          console.log('Ajout track local:', track.kind);
           pc.addTrack(track, stream);
         });
 
-        // Gestion améliorée des tracks distants
-        pc.ontrack = async (event) => {
-          console.log(`Track reçu de type: ${event.track.kind}`);
+        // Gestion améliorée des pistes distantes
+        pc.ontrack = (event) => {
+          console.log('Piste reçue:', event.track.kind);
+          const [stream] = event.streams;
           
-          const [remoteMediaStream] = event.streams;
-          setRemoteStream(remoteMediaStream);
-          
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = remoteMediaStream;
-            remoteVideoRef.current.muted = false;
-            remoteVideoRef.current.volume = 1;
-            
-            try {
-              await remoteVideoRef.current.play();
-              console.log('Lecture distante démarrée');
-              
-              if (event.track.kind === 'video') {
-                setIsVideoConnected(true);
-              }
-            } catch (err) {
-              console.error('Erreur lecture média distant:', err);
+          if (!remoteVideoRef.current?.srcObject) {
+            setRemoteStream(stream);
+            if (remoteVideoRef.current) {
+              remoteVideoRef.current.srcObject = stream;
+              remoteVideoRef.current.play()
+                .then(() => console.log('Lecture vidéo distante démarrée'))
+                .catch(err => console.error('Erreur lecture vidéo:', err));
             }
           }
-        };
 
-        // Surveillance de l'état de la connexion
-        pc.oniceconnectionstatechange = () => {
-          console.log('État ICE:', pc.iceConnectionState);
-          if (pc.iceConnectionState === 'failed') {
-            pc.restartIce();
+          // Activer la vidéo dès qu'une piste vidéo est reçue
+          if (event.track.kind === 'video') {
+            setIsVideoConnected(true);
           }
         };
 
-        // Amélioration de la négociation
-        pc.onnegotiationneeded = async () => {
-          try {
-            if (isInitiator) {
-              const offer = await pc.createOffer({
-                offerToReceiveAudio: true,
-                offerToReceiveVideo: call.type === 'VIDEO'
-              });
-              
-              // Optimisation SDP pour l'audio
-              if (offer.sdp) {
-                offer.sdp = offer.sdp
-                  .replace(/(a=fmtp:111.*\r\n)/g, '$1a=fmtp:111 stereo=1;sprop-stereo=1\r\n')
-                  .replace(/(m=audio .*\r\n)/g, '$1a=rtpmap:111 opus/48000/2\r\n');
-              }
-              
-              await pc.setLocalDescription(offer);
-              socket?.emit('webrtc-signal', {
-                callId: call.id,
-                signal: { type: 'offer', sdp: offer },
-                targetUserId: call.receiverId
-              });
-            }
-          } catch (err) {
-            console.error('Erreur négociation:', err);
-          }
-        };
-
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
+        // Gestion des candidats ICE
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate) {
+            console.log('Envoi candidat ICE');
             socket?.emit('webrtc-signal', {
               callId: call.id,
-              signal: { type: 'ice-candidate', candidate: event.candidate },
-              targetUserId: isInitiator ? call.receiverId : call.callerId,
+              signal: { 
+                type: 'ice-candidate', 
+                candidate 
+              },
+              targetUserId: isInitiator ? call.receiverId : call.callerId
             });
           }
         };
 
+        // Créer et envoyer l'offre si initiateur
+        if (isInitiator) {
+          console.log('Création offre');
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          
+          socket?.emit('webrtc-signal', {
+            callId: call.id,
+            signal: { 
+              type: 'offer', 
+              sdp: offer 
+            },
+            targetUserId: call.receiverId
+          });
+        }
+
         peerConnection.current = pc;
 
       } catch (err) {
-        console.error('Erreur initialisation WebRTC:', err);
+        console.error('Erreur WebRTC:', err);
         onClose();
       }
     };
 
     initializeCall();
 
+    // Nettoyage
     return () => {
       if (peerConnection.current) {
         peerConnection.current.close();
@@ -191,10 +163,12 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
   }, []);
 
 
+  // Gestion des signaux WebRTC
   useEffect(() => {
     if (!socket || !peerConnection.current) return;
 
     socket.on('webrtc-signal', async (data) => {
+      console.log('Signal reçu:', data.signal.type);
       const pc = peerConnection.current;
       if (!pc) return;
 
@@ -203,18 +177,21 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
           await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
+          
           socket.emit('webrtc-signal', {
             callId: call.id,
             signal: { type: 'answer', sdp: answer },
-            targetUserId: isInitiator ? call.receiverId : call.callerId,
+            targetUserId: isInitiator ? call.receiverId : call.callerId
           });
-        } else if (data.signal.type === 'answer') {
+        }
+        else if (data.signal.type === 'answer') {
           await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
-        } else if (data.signal.type === 'ice-candidate') {
+        }
+        else if (data.signal.type === 'ice-candidate') {
           await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
         }
       } catch (err) {
-        console.error('Error handling WebRTC signal:', err);
+        console.error('Erreur signal WebRTC:', err);
       }
     });
 
