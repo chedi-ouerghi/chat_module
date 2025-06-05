@@ -53,61 +53,76 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     }
   }, [remoteStream]);
 
+  // Ajout d'un useEffect pour surveiller les flux vidéo
+  useEffect(() => {
+    if (localStream && localVideoRef.current) {
+      console.log('Configuration du flux vidéo local');
+      localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play().catch(err => console.error('Erreur lecture vidéo locale:', err));
+    }
+  }, [localStream]);
+
+  useEffect(() => {
+    if (remoteStream && remoteVideoRef.current) {
+      console.log('Configuration du flux vidéo distant');
+      remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play().catch(err => console.error('Erreur lecture vidéo distante:', err));
+    }
+  }, [remoteStream]);
+
   useEffect(() => {
     const initializeWebRTC = async () => {
       try {
+        console.log('Initialisation WebRTC...');
         const pc = new RTCPeerConnection({
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' }
-          ],
-          bundlePolicy: 'max-bundle',
-          rtcpMuxPolicy: 'require'
+          ]
         });
 
+        console.log('Demande d\'accès aux périphériques...');
         const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: call.type === 'VIDEO' ? true : false,
-          audio: true
+          video: call.type === 'VIDEO' ? {
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          } : false,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true
+          }
         });
+
+        console.log('Flux local capturé:', mediaStream);
+        console.log('Tracks vidéo:', mediaStream.getVideoTracks());
+        console.log('Tracks audio:', mediaStream.getAudioTracks());
 
         setLocalStream(mediaStream);
-        
-        // Configuration locale
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = mediaStream;
-          localVideoRef.current.muted = true; // Mute local audio to prevent echo
-        }
 
-        // Ajout des tracks au peer connection
+        // Ajout des tracks avec logs
         mediaStream.getTracks().forEach(track => {
+          console.log(`Ajout track ${track.kind} au peer connection`);
           pc.addTrack(track, mediaStream);
         });
 
-        // Gestion des tracks distants
         pc.ontrack = (event) => {
+          console.log('Événement ontrack:', event);
+          console.log('Type de track reçu:', event.track.kind);
+          
           const [remoteMediaStream] = event.streams;
-          console.log('Track reçu:', event.track.kind);
-
-          if (remoteVideoRef.current && !remoteVideoRef.current.srcObject) {
-            remoteVideoRef.current.srcObject = remoteMediaStream;
-            setRemoteStream(remoteMediaStream);
-            setIsVideoConnected(event.track.kind === 'video');
-          }
+          console.log('Flux distant reçu:', remoteMediaStream);
+          
+          setRemoteStream(remoteMediaStream);
+          setIsVideoConnected(event.track.kind === 'video');
 
           event.track.onunmute = () => {
-            console.log(`Track ${event.track.kind} unmuted`);
-            if (event.track.kind === 'video') {
-              setIsVideoConnected(true);
-            }
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = remoteMediaStream;
-            }
+            console.log(`Track ${event.track.kind} activé`);
           };
         };
 
-        // ICE Handling
         pc.onicecandidate = ({ candidate }) => {
           if (candidate) {
+            console.log('Nouveau candidat ICE:', candidate);
             socket?.emit('webrtc-signal', {
               callId: call.id,
               signal: { type: 'ice-candidate', candidate },
@@ -117,8 +132,9 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
         };
 
         pc.oniceconnectionstatechange = () => {
-          console.log('ICE State:', pc.iceConnectionState);
+          console.log('État de la connexion ICE:', pc.iceConnectionState);
           if (pc.iceConnectionState === 'failed') {
+            console.log('Tentative de reconnexion ICE...');
             pc.restartIce();
           }
         };
@@ -146,14 +162,16 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
         peerConnection.current = pc;
 
       } catch (err) {
-        console.error('WebRTC initialization error:', err);
+        console.error('Erreur lors de l\'initialisation WebRTC:', err);
+        alert('Erreur d\'accès aux périphériques. Vérifiez les permissions.');
         onClose();
       }
     };
 
     initializeWebRTC();
-
+    
     return () => {
+      console.log('Nettoyage des ressources WebRTC...');
       if (peerConnection.current) {
         peerConnection.current.close();
       }
@@ -166,17 +184,19 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     };
   }, []);
 
-  // Amélioration de la gestion des signaux
+  // Amélioration de la gestion des signaux WebRTC
   useEffect(() => {
     if (!socket || !peerConnection.current) return;
 
     const handleSignal = async (data: any) => {
+      console.log('Signal WebRTC reçu:', data.signal.type);
       const pc = peerConnection.current;
       if (!pc) return;
 
       try {
         switch (data.signal.type) {
           case 'offer':
+            console.log('Traitement de l\'offre:', data.signal.sdp);
             await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
@@ -188,17 +208,19 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
             break;
 
           case 'answer':
+            console.log('Traitement de la réponse:', data.signal.sdp);
             await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
             break;
 
           case 'ice-candidate':
+            console.log('Ajout du candidat ICE:', data.signal.candidate);
             if (pc.remoteDescription) {
               await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
             }
             break;
         }
       } catch (err) {
-        console.error('Signal handling error:', err);
+        console.error('Erreur traitement signal:', err);
       }
     };
 
