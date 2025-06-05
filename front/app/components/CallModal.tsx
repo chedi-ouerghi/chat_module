@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { useUser } from '~/root';
 import { useSocket } from '~/hooks/useSocket';
-import { MicOff, Mic, Volume2, VolumeX, PhoneOff } from 'lucide-react';
-import { Icons } from './icons';
-import { cn } from '~/lib/utils';
+import { MicOff, Mic, Volume2, VolumeX, PhoneOff, Maximize2, Minimize2, User } from 'lucide-react';
+
+type CallModalProps = {
+  call: {
+    id: string;
+    type: 'AUDIO' | 'VIDEO';
+    status: string;
+    callerId: string;
+    receiverId: string;
+  };
+  onClose: () => void;
+};
 
 export const CallModal = ({ call, onClose }: CallModalProps) => {
   const { socket } = useSocket();
@@ -21,6 +30,7 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const peerConnection = useRef<RTCPeerConnection | null>(null);
+  const isInitiator = call.callerId === user.id;
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -288,12 +298,11 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
 
   return (
     <div className="fixed inset-0 bg-gradient-to-br from-gray-900 to-black backdrop-blur-lg flex items-center justify-center z-50">
-      <div className={cn(
-        "relative bg-black/30 p-6 rounded-3xl shadow-2xl w-full max-w-7xl",
-        "border border-white/10 backdrop-blur-md transition-all duration-300",
-        isFullscreen ? "h-screen max-w-full m-0 rounded-none" : "h-auto m-4"
-      )}>
-        {/* Header avec indicateur de qualité de connexion */}
+      <div className={`relative bg-black/30 p-6 rounded-3xl shadow-2xl w-full max-w-7xl
+        border border-white/10 backdrop-blur-md transition-all duration-300
+        ${isFullscreen ? "h-screen max-w-full m-0 rounded-none" : "h-auto m-4"}`}>
+        
+        {/* Header */}
         <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center bg-gradient-to-b from-black/40 to-transparent z-10">
           <div className="flex items-center gap-4">
             <div className="flex flex-col">
@@ -301,11 +310,10 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
                 {call.type === 'VIDEO' ? 'Appel vidéo' : 'Appel audio'}
               </h2>
               <div className="flex items-center gap-2">
-                <span className={cn(
-                  "w-2 h-2 rounded-full",
+                <span className={`w-2 h-2 rounded-full ${
                   connectionQuality === 'good' ? "bg-green-500" : 
                   connectionQuality === 'medium' ? "bg-yellow-500" : "bg-red-500"
-                )} />
+                }`} />
                 <span className="text-sm text-white/70">
                   {connectionQuality === 'good' ? 'Excellente connexion' :
                    connectionQuality === 'medium' ? 'Connexion moyenne' : 'Mauvaise connexion'}
@@ -315,22 +323,21 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
-            <button 
-              onClick={toggleFullscreen}
-              className="p-2 rounded-full hover:bg-white/10 transition-colors"
-            >
-              {isFullscreen ? <Icons.minimize className="w-5 h-5 text-white" /> : <Icons.maximize className="w-5 h-5 text-white" />}
-            </button>
-          </div>
+          <button 
+            onClick={toggleFullscreen}
+            className="p-2 rounded-full hover:bg-white/10 transition-colors"
+          >
+            {isFullscreen ? 
+              <Minimize2 className="w-5 h-5 text-white" /> : 
+              <Maximize2 className="w-5 h-5 text-white" />
+            }
+          </button>
         </div>
 
         {/* Video Grid */}
-        <div className={cn(
-          "grid gap-4 mt-16",
-          call.type === 'VIDEO' ? "grid-cols-2" : "grid-cols-1",
-          isFullscreen ? "h-[calc(100vh-12rem)]" : "h-[60vh]"
-        )}>
+        <div className={`grid gap-4 mt-16
+          ${call.type === 'VIDEO' ? "grid-cols-2" : "grid-cols-1"}
+          ${isFullscreen ? "h-[calc(100vh-12rem)]" : "h-[60vh]"}`}>
           {call.type === 'VIDEO' && (
             <>
               <div className="relative rounded-2xl overflow-hidden bg-black/40">
@@ -343,7 +350,7 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
                 />
                 <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
                   <div className="bg-black/60 px-4 py-2 rounded-full flex items-center gap-2">
-                    <Icons.user className="w-4 h-4 text-white/70" />
+                    <User className="w-4 h-4 text-white/70" />
                     <span className="text-sm text-white">Vous</span>
                   </div>
                   {isMuted && (
@@ -361,19 +368,18 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
                   playsInline 
                   className="w-full h-full object-cover"
                 />
-                {!isVideoConnected ? (
+                {!isVideoConnected && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm">
-                    <Icons.loader2 className="w-8 h-8 text-white animate-spin mb-2" />
+                    <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin mb-2" />
                     <span className="text-white/90">Connexion en cours...</span>
                   </div>
-                ) : (
-                  <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
-                    <div className="bg-black/60 px-4 py-2 rounded-full flex items-center gap-2">
-                      <Icons.user className="w-4 h-4 text-white/70" />
-                      <span className="text-sm text-white">Interlocuteur</span>
-                    </div>
-                  </div>
                 )}
+                <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
+                  <div className="bg-black/60 px-4 py-2 rounded-full flex items-center gap-2">
+                    <User className="w-4 h-4 text-white/70" />
+                    <span className="text-sm text-white">Interlocuteur</span>
+                  </div>
+                </div>
               </div>
             </>
           )}
@@ -384,20 +390,18 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
           <div className="flex items-center justify-center gap-4">
             <button 
               onClick={toggleMute}
-              className={cn(
-                "p-4 rounded-full transition-all duration-200",
+              className={`p-4 rounded-full transition-all duration-200 ${
                 isMuted ? "bg-red-500 hover:bg-red-600" : "bg-white/10 hover:bg-white/20"
-              )}
+              }`}
             >
               {isMuted ? <MicOff className="w-6 h-6 text-white" /> : <Mic className="w-6 h-6 text-white" />}
             </button>
             
             <button 
               onClick={toggleSpeaker}
-              className={cn(
-                "p-4 rounded-full transition-all duration-200",
+              className={`p-4 rounded-full transition-all duration-200 ${
                 !isSpeakerOn ? "bg-red-500 hover:bg-red-600" : "bg-white/10 hover:bg-white/20"
-              )}
+              }`}
             >
               {isSpeakerOn ? <Volume2 className="w-6 h-6 text-white" /> : <VolumeX className="w-6 h-6 text-white" />}
             </button>

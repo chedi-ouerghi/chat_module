@@ -2,14 +2,14 @@ import { cssBundleHref } from '@remix-run/css-bundle';
 import type { LinksFunction, LoaderFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import {
-    Link,
-    Links,
-    LiveReload,
-    Meta,
-    Outlet,
-    Scripts,
-    ScrollRestoration,
-    useRouteLoaderData,
+	Link,
+	Links,
+	LiveReload,
+	Meta,
+	Outlet,
+	Scripts,
+	ScrollRestoration,
+	useRouteLoaderData,
 } from '@remix-run/react';
 import { z } from 'zod';
 import tailwindCss from '~/global.css';
@@ -26,13 +26,17 @@ const envSchema = z.object({
 });
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-	const user = await getOptionalUser({ request });
-	const env = envSchema.parse({
-		// BACKEND_URL: process.env.BACKEND_URL,
-		WEBSOCKET_URL: process.env.WEBSOCKET_URL ?? 'https://chat-module-2.onrender.com',
-		BACKEND_URL: process.env.BACKEND_URL ?? ' https://chat-module-2.onrender.com ', // Mise à jour du port
-	});
-	return json({ user, env });
+	try {
+		const user = await getOptionalUser({ request });
+		const env = envSchema.parse({
+			WEBSOCKET_URL: process.env.WEBSOCKET_URL ?? 'https://chat-module-2.onrender.com',
+			BACKEND_URL: process.env.BACKEND_URL ?? 'https://chat-module-2.onrender.com',
+		});
+		return json({ user, env });
+	} catch (error) {
+		console.error('Root loader error:', error);
+		return json({ user: null, env: null, error: 'Configuration error' }, { status: 500 });
+	}
 };
 
 
@@ -145,6 +149,27 @@ export default function App() {
 					<LiveReload />
 				</body>
 			</SocketProvider>
+		</html>
+	);
+}
+
+export function ErrorBoundary() {
+	return (
+		<html>
+			<head>
+				<title>Erreur</title>
+				<Meta />
+				<Links />
+			</head>
+			<body>
+				<div className="min-h-screen flex items-center justify-center">
+					<div className="text-center">
+						<h1 className="text-4xl font-bold text-gray-800 mb-4">Une erreur est survenue</h1>
+						<p className="text-gray-600">Veuillez réessayer ultérieurement.</p>
+					</div>
+				</div>
+				<Scripts />
+			</body>
 		</html>
 	);
 }
