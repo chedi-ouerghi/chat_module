@@ -83,7 +83,7 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
 
   // Amélioration de la signalisation WebRTC
   const initializePeerConnection = () => {
-    console.log('Initialisation PeerConnection...');
+    console.log('Initialisation nouvelle connexion WebRTC');
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -91,117 +91,132 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
       ]
     });
 
-    // Listen to connection state changes
-    pc.onconnectionstatechange = () => {
-      console.log('Connection state changed:', pc.connectionState);
-      switch (pc.connectionState) {
-        case 'connected':
-          console.log('Peers connected!');
-          break;
-        case 'disconnected':
-          console.log('Peers disconnected!');
-          break;
-        case 'failed':
-          console.log('Connection failed, restarting...');
-          pc.restartIce();
-          break;
-      }
-    };
-
+    // Amélioration de la gestion des tracks
     pc.ontrack = (event) => {
-      console.log('Received remote track:', event.track.kind);
-      const [remoteMediaStream] = event.streams;
-      setRemoteStream(remoteMediaStream);
+      console.log('Nouveau track reçu:', event.track.kind);
+      const [stream] = event.streams;
       
+      if (!remoteStream) {
+        console.log('Configuration du flux distant initial');
+        setRemoteStream(stream);
+        
+        if (remoteVideoRef.current) {
+          console.log('Attribution du flux distant à la vidéo');
+          remoteVideoRef.current.srcObject = stream;
+        }
+      }
+
+      // Activer immédiatement la vidéo si c'est un track vidéo
       if (event.track.kind === 'video') {
+        console.log('Track vidéo détecté, activation de la connexion vidéo');
         setIsVideoConnected(true);
       }
-      
+
+      // Gestion des événements de track
       event.track.onunmute = () => {
-        console.log(`${event.track.kind} track unmuted`);
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteMediaStream;
-        }
+        console.log(`Track ${event.track.kind} activé`);
+        setIsVideoConnected(true);
+      };
+
+      event.track.onended = () => {
+        console.log(`Track ${event.track.kind} terminé`);
       };
     };
 
     return pc;
   };
 
-  // Effect principal avec meilleure gestion des signaux
+  // Gestion améliorée des médias locaux
+  const startLocalMedia = async () => {
+    try {
+      console.log('Demande accès médias avec contraintes optimisées');
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: call.type === 'VIDEO' ? {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { min: 20, ideal: 30 }
+        } : false,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      // Configure local video immediately
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = mediaStream;
+      }
+
+      return mediaStream;
+    } catch (err) {
+      console.error('Erreur accès médias:', err);
+      throw err;
+    }
+  };
+
+  // Effect principal avec meilleure gestion de la connexion
   useEffect(() => {
     let localMediaStream: MediaStream | null = null;
     
     const initialize = async () => {
       try {
-        console.log('Starting call initialization...');
-        
-        // 1. Créer la connexion peer
+        // 1. Initialiser la connexion
         const pc = initializePeerConnection();
         peerConnection.current = pc;
 
-        // 2. Obtenir les médias locaux
-        localMediaStream = await navigator.mediaDevices.getUserMedia({
-          video: call.type === 'VIDEO',
-          audio: true
-        });
-        console.log('Local media obtained');
+        // 2. Démarrer les médias locaux
+        localMediaStream = await startLocalMedia();
         setLocalStream(localMediaStream);
+        console.log('Médias locaux initialisés');
 
-        // 3. Ajouter les tracks
+        // 3. Ajouter les tracks avec vérification
         localMediaStream.getTracks().forEach(track => {
-          console.log(`Adding ${track.kind} track to peer connection`);
+          console.log(`Ajout track local: ${track.kind}`);
           pc.addTrack(track, localMediaStream!);
         });
 
-        // 4. Gérer la signalisation
+        // 4. Gestion de la signalisation
         if (isInitiator) {
-          console.log('Creating offer as initiator');
-          const offer = await pc.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: call.type === 'VIDEO'
-          });
-          
+          console.log('Création offre comme initiateur');
+          const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
-          console.log('Local description set, sending offer');
           
           socket?.emit('webrtc-signal', {
             callId: call.id,
-            signal: { 
-              type: 'offer',
-              sdp: pc.localDescription
-            },
+            signal: { type: 'offer', sdp: offer },
             targetUserId: call.receiverId
           });
         }
 
-        // 5. Gérer les candidats ICE
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
-            console.log('Sending ICE candidate');
+        // 5. Gestion des candidats ICE
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate) {
+            console.log('Envoi candidat ICE');
             socket?.emit('webrtc-signal', {
               callId: call.id,
-              signal: { 
-                type: 'ice-candidate',
-                candidate: event.candidate 
-              },
+              signal: { type: 'ice-candidate', candidate },
               targetUserId: isInitiator ? call.receiverId : call.callerId
             });
           }
         };
 
       } catch (err) {
-        console.error('Setup error:', err);
+        console.error('Erreur initialisation:', err);
         onClose();
       }
     };
 
     initialize();
 
-    // Cleanup
+    // Cleanup amélioré
     return () => {
+      console.log('Nettoyage des ressources');
       if (localMediaStream) {
-        localMediaStream.getTracks().forEach(track => track.stop());
+        localMediaStream.getTracks().forEach(track => {
+          track.stop();
+          console.log(`Track ${track.kind} arrêté`);
+        });
       }
       if (peerConnection.current) {
         peerConnection.current.close();
