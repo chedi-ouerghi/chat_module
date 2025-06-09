@@ -117,163 +117,94 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
       ]
     });
 
-    pc.onconnectionstatechange = () => {
-      console.log('État de la connexion:', pc.connectionState);
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log('État ICE:', pc.iceConnectionState);
-    };
-
+    // Ajout des handlers essentiels pour WebRTC
     pc.ontrack = (event) => {
-      console.log('Track reçu:', event.track.kind);
-      if (event.streams && event.streams[0]) {
-        console.log('Nouveau flux distant reçu');
-        setRemoteStream(event.streams[0]);
-        setIsVideoConnected(event.track.kind === 'video');
+      console.log('Track distant reçu');
+      setRemoteStream(event.streams[0]);
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = event.streams[0];
       }
     };
 
-    return pc;
-  };
-
-  // Improved media initialization
-  const startLocalMedia = async () => {
-    try {
-      console.log('Requesting media access...');
-      const constraints = {
-        video: call.type === 'VIDEO' ? {
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        } : false,
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true
-        }
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('Media access granted:', stream.getTracks().map(t => t.kind));
-      return stream;
-    } catch (err) {
-      console.error('Media access error:', err);
-      throw err;
-    }
-  };
-
-  useEffect(() => {
-    let isActive = true;
-    let cleanup = () => {};
-    
-    const initialize = async () => {
-      try {
-        // 1. Initialiser la connexion peer
-        const pc = initializePeerConnection();
-        if (!isActive) return;
-        peerConnection.current = pc;
-
-        // 2. Obtenir les médias locaux
-        const mediaStream = await startLocalMedia();
-        if (!isActive) {
-          mediaStream.getTracks().forEach(track => track.stop());
-          return;
-        }
-        setLocalStream(mediaStream);
-
-        // 3. Ajouter les tracks au peer connection
-        mediaStream.getTracks().forEach(track => {
-          pc.addTrack(track, mediaStream);
-          console.log(`Track ajouté: ${track.kind}`);
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log('Nouveau candidat ICE trouvé');
+        socket?.emit('webrtc-signal', {
+          type: 'ice-candidate',
+          candidate: event.candidate,
+          callId: call.id,
+          targetUserId: isInitiator ? call.receiverId : call.callerId
         });
+      }
+    };
 
-        // 4. Si initiateur, créer l'offre
-        if (isInitiator) {
-          const offer = await pc.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: call.type === 'VIDEO'
-          });
+    pc.onnegotiationneeded = async () => {
+      if (isInitiator) {
+        try {
+          const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
-          
+          console.log('Envoi de l\'offre de négociation');
           socket?.emit('webrtc-signal', {
             type: 'offer',
             sdp: offer,
             callId: call.id,
             targetUserId: call.receiverId
           });
+        } catch (err) {
+          console.error('Erreur négociation:', err);
         }
-
-        cleanup = () => {
-          console.log('Cleaning up media and connection');
-          mediaStream.getTracks().forEach(track => {
-            track.stop();
-            console.log(`Stopped ${track.kind} track`);
-          });
-          pc.close();
-        };
-      } catch (err) {
-        console.error('Setup error:', err);
-        onClose();
       }
     };
 
-    initialize();
+    return pc;
+  };
 
-    return () => {
-      isActive = false;
-      cleanup();
-    };
-  }, []);
-
-  // Gestion des signaux WebRTC
+  // Mise à jour du gestionnaire de signaux WebRTC
   useEffect(() => {
     if (!socket || !peerConnection.current) return;
 
     const handleSignal = async (data: any) => {
-      console.log('Signal reçu:', data.type);
+      console.log('Signal WebRTC reçu:', data.type);
       const pc = peerConnection.current;
       if (!pc) return;
 
       try {
         switch (data.type) {
           case 'offer':
-            console.log('Traitement offre');
             await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-            
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            
             socket.emit('webrtc-signal', {
               type: 'answer',
               sdp: answer,
               callId: call.id,
-              targetUserId: isInitiator ? call.receiverId : call.callerId
+              targetUserId: data.callerId
             });
             break;
 
           case 'answer':
-            console.log('Traitement réponse');
             await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
             break;
 
           case 'ice-candidate':
-            console.log('Ajout candidat ICE');
-            if (pc.remoteDescription) {
-              await pc.addIceCandidate(data.candidate);
+            if (data.candidate) {
+              await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             }
             break;
         }
       } catch (err) {
-        console.error('Erreur signal:', err);
+        console.error('Erreur traitement signal:', err);
       }
     };
 
     socket.on('webrtc-signal', handleSignal);
     return () => socket.off('webrtc-signal', handleSignal);
-  }, [socket]);
+  }, [socket, call.id]);
 
   // Configurer le flux vidéo distant
   useEffect(() => {
@@ -378,23 +309,26 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
           </button>
         </div>
 
-        {/* Video Grid */}
-        <div className={`grid gap-4 mt-16
-          ${call.type === 'VIDEO' ? "grid-cols-2" : "grid-cols-1"}
-          ${isFullscreen ? "h-[calc(100vh-12rem)]" : "h-[60vh]"}`}>
+        {/* Video Grid amélioré */}
+        <div className={`grid gap-4 mt-16 ${call.type === 'VIDEO' ? "grid-cols-2" : "grid-cols-1"}
+             ${isFullscreen ? "h-[calc(100vh-12rem)]" : "h-[60vh]"}`}>
           {call.type === 'VIDEO' && (
             <>
+              {/* Local Video */}
               <div className="relative rounded-2xl overflow-hidden bg-black/40">
                 <video 
                   ref={localVideoRef}
-                  autoPlay
-                  playsInline
+                  autoPlay 
+                  playsInline 
                   muted
                   className="w-full h-full object-cover"
                 />
                 {!isLocalVideoReady && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                    <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                    <div className="text-center">
+                      <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                      <p className="text-white text-sm">Initialisation de la caméra...</p>
+                    </div>
                   </div>
                 )}
                 <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
@@ -410,16 +344,20 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
                 </div>
               </div>
 
+              {/* Remote Video */}
               <div className="relative rounded-2xl overflow-hidden bg-black/40">
                 <video 
                   ref={remoteVideoRef}
-                  autoPlay
+                  autoPlay 
                   playsInline
                   className="w-full h-full object-cover"
                 />
                 {!isRemoteVideoReady && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                    <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                    <div className="text-center">
+                      <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                      <p className="text-white text-sm">En attente de connexion...</p>
+                    </div>
                   </div>
                 )}
                 <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
