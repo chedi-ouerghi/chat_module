@@ -32,6 +32,10 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'medium' | 'poor'>('good');
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Add new state to track media loading
+  const [isLocalVideoReady, setIsLocalVideoReady] = useState(false);
+  const [isRemoteVideoReady, setIsRemoteVideoReady] = useState(false);
+
   // Garantir que les refs sont toujours disponibles
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -75,7 +79,17 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     if (localStream && localVideoRef.current) {
       console.log('Configuration du flux vidéo local');
       localVideoRef.current.srcObject = localStream;
-      localVideoRef.current.play().catch(err => console.error('Erreur lecture vidéo locale:', err));
+      
+      // Handle video loading
+      localVideoRef.current.onloadedmetadata = async () => {
+        try {
+          setIsLocalVideoReady(true);
+          await localVideoRef.current?.play();
+          console.log('Local video playing');
+        } catch (err) {
+          console.error('Local video play error:', err);
+        }
+      };
     }
   }, [localStream]);
 
@@ -83,7 +97,17 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     if (remoteStream && remoteVideoRef.current) {
       console.log('Configuration du flux vidéo distant');
       remoteVideoRef.current.srcObject = remoteStream;
-      remoteVideoRef.current.play().catch(err => console.error('Erreur lecture vidéo distante:', err));
+      
+      // Handle video loading
+      remoteVideoRef.current.onloadedmetadata = async () => {
+        try {
+          setIsRemoteVideoReady(true);
+          await remoteVideoRef.current?.play();
+          console.log('Remote video playing');
+        } catch (err) {
+          console.error('Remote video play error:', err);
+        }
+      };
     }
   }, [remoteStream]);
 
@@ -117,60 +141,62 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     return pc;
   };
 
+  // Improved media initialization
   const startLocalMedia = async () => {
     try {
+      console.log('Requesting media access...');
       const constraints = {
         video: call.type === 'VIDEO' ? {
           width: { ideal: 1280 },
           height: { ideal: 720 }
         } : false,
-        audio: true
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true
+        }
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('Flux local obtenu:', stream.getTracks());
+      console.log('Media access granted:', stream.getTracks().map(t => t.kind));
       return stream;
     } catch (err) {
-      console.error('Erreur médias:', err);
+      console.error('Media access error:', err);
       throw err;
     }
   };
 
   useEffect(() => {
-    let cleanup = async () => {};
+    let isActive = true;
+    let cleanup = () => {};
     
     const initialize = async () => {
       try {
-        // 1. Créer la connexion peer
+        // 1. Initialiser la connexion peer
         const pc = initializePeerConnection();
+        if (!isActive) return;
         peerConnection.current = pc;
 
         // 2. Obtenir les médias locaux
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: call.type === 'VIDEO',
-          audio: true
-        });
-
-        console.log('Flux local obtenu:', mediaStream.getTracks());
+        const mediaStream = await startLocalMedia();
+        if (!isActive) {
+          mediaStream.getTracks().forEach(track => track.stop());
+          return;
+        }
         setLocalStream(mediaStream);
 
-        // 3. Configurer la vidéo locale
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = mediaStream;
-          await localVideoRef.current.play();
-        }
-
-        // 4. Ajouter les tracks au peer connection
+        // 3. Ajouter les tracks au peer connection
         mediaStream.getTracks().forEach(track => {
           pc.addTrack(track, mediaStream);
           console.log(`Track ajouté: ${track.kind}`);
         });
 
-        // 5. Si initiateur, créer l'offre
+        // 4. Si initiateur, créer l'offre
         if (isInitiator) {
-          const offer = await pc.createOffer();
+          const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: call.type === 'VIDEO'
+          });
           await pc.setLocalDescription(offer);
-          console.log('Offre créée');
           
           socket?.emit('webrtc-signal', {
             type: 'offer',
@@ -180,19 +206,26 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
           });
         }
 
-        cleanup = async () => {
-          mediaStream.getTracks().forEach(track => track.stop());
+        cleanup = () => {
+          console.log('Cleaning up media and connection');
+          mediaStream.getTracks().forEach(track => {
+            track.stop();
+            console.log(`Stopped ${track.kind} track`);
+          });
           pc.close();
         };
-
       } catch (err) {
-        console.error('Erreur initialisation:', err);
+        console.error('Setup error:', err);
         onClose();
       }
     };
 
     initialize();
-    return () => { cleanup(); };
+
+    return () => {
+      isActive = false;
+      cleanup();
+    };
   }, []);
 
   // Gestion des signaux WebRTC
@@ -354,11 +387,16 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
               <div className="relative rounded-2xl overflow-hidden bg-black/40">
                 <video 
                   ref={localVideoRef}
-                  autoPlay 
-                  playsInline 
-                  muted 
+                  autoPlay
+                  playsInline
+                  muted
                   className="w-full h-full object-cover"
                 />
+                {!isLocalVideoReady && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                    <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
                 <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
                   <div className="bg-black/60 px-4 py-2 rounded-full flex items-center gap-2">
                     <User className="w-4 h-4 text-white/70" />
@@ -375,14 +413,13 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
               <div className="relative rounded-2xl overflow-hidden bg-black/40">
                 <video 
                   ref={remoteVideoRef}
-                  autoPlay 
-                  playsInline 
+                  autoPlay
+                  playsInline
                   className="w-full h-full object-cover"
                 />
-                {!isVideoConnected && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm">
-                    <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin mb-2" />
-                    <span className="text-white/90">Connexion en cours...</span>
+                {!isRemoteVideoReady && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                    <div className="w-8 h-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
                   </div>
                 )}
                 <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
