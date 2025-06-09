@@ -148,7 +148,7 @@ export class AppGateway implements OnGatewayInit, OnModuleInit {
     },
     @ConnectedSocket() socket: Socket,
   ) {
-    console.log('Signal WebRTC reçu:', data.type);
+    console.log(`Signal WebRTC reçu (${data.type}) de ${socket.data.userId} pour ${data.targetUserId}`);
 
     try {
       const call = await this.chatService.getCall(data.callId);
@@ -157,23 +157,22 @@ export class AppGateway implements OnGatewayInit, OnModuleInit {
         return;
       }
 
-      // Émettre le signal au destinataire
+      // Émettre le signal au destinataire avec toutes les informations nécessaires
       this.server.to(`user_${data.targetUserId}`).emit('webrtc-signal', {
         type: data.type,
         sdp: data.sdp,
         candidate: data.candidate,
         callId: data.callId,
         callerId: socket.data.userId,
+        targetUserId: data.targetUserId
       });
 
-      console.log(
-        `Signal ${data.type} transmis à l'utilisateur ${data.targetUserId}`,
-      );
+      console.log(`Signal ${data.type} transmis: ${socket.data.userId} -> ${data.targetUserId}`);
     } catch (error) {
       console.error('Erreur traitement signal WebRTC:', error);
       socket.emit('webrtc-error', {
         message: 'Erreur lors de la transmission du signal',
-        error: error.message,
+        error: error.message
       });
     }
   }

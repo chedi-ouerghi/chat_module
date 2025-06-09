@@ -227,16 +227,21 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     if (!socket || !peerConnection.current) return;
 
     const handleSignal = async (data: any) => {
+      console.log('Signal reçu:', data.type, 'de:', data.callerId);
       const pc = peerConnection.current;
       if (!pc) return;
 
       try {
         switch (data.type) {
           case 'offer':
+            console.log('Traitement offre reçue');
             await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            
+            // Créer et envoyer la réponse
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             
+            console.log('Envoi réponse');
             socket.emit('webrtc-signal', {
               type: 'answer',
               sdp: answer,
@@ -246,11 +251,13 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
             break;
 
           case 'answer':
+            console.log('Traitement réponse reçue');
             await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
             break;
 
           case 'ice-candidate':
-            if (pc.remoteDescription && data.candidate) {
+            if (data.candidate) {
+              console.log('Ajout candidat ICE');
               await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             }
             break;
@@ -261,8 +268,38 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     };
 
     socket.on('webrtc-signal', handleSignal);
-    return () => socket.off('webrtc-signal', handleSignal);
-  }, [socket]);
+    
+    // Ajout d'un gestionnaire d'erreur WebRTC
+    socket.on('webrtc-error', (error) => {
+      console.error('Erreur WebRTC:', error);
+    });
+
+    return () => {
+      socket.off('webrtc-signal', handleSignal);
+      socket.off('webrtc-error');
+    };
+  }, [socket, call.id]);
+
+  // Gestion améliorée des tracks
+  useEffect(() => {
+    if (!peerConnection.current) return;
+
+    peerConnection.current.ontrack = (event) => {
+      console.log('Track reçu:', event.track.kind);
+      const [stream] = event.streams;
+      setRemoteStream(stream);
+
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+        setIsRemoteVideoReady(true);
+      }
+
+      // Activer l'audio par défaut
+      if (event.track.kind === 'audio') {
+        event.track.enabled = true;
+      }
+    };
+  }, []);
 
   // Configurer le flux vidéo distant
   useEffect(() => {
