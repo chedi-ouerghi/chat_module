@@ -111,65 +111,101 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     }
   }, [remoteStream]);
 
-  // Amélioration de la gestion WebRTC
-  const initializePeerConnection = () => {
-    console.log('Initialisation nouvelle connexion WebRTC');
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-      ]
-    });
-
-    // Ajout des handlers essentiels pour WebRTC
-    pc.ontrack = (event) => {
-      console.log('Track distant reçu');
-      setRemoteStream(event.streams[0]);
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-      }
-    };
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log('Nouveau candidat ICE trouvé');
-        socket?.emit('webrtc-signal', {
-          type: 'ice-candidate',
-          candidate: event.candidate,
-          callId: call.id,
-          targetUserId: isInitiator ? call.receiverId : call.callerId
+  // Initialisation de la connexion WebRTC avec gestion correcte des flux
+  useEffect(() => {
+    let isActive = true;
+    
+    const initialize = async () => {
+      try {
+        // 1. Créer la connexion peer avec les configurations ICE
+        const pc = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
         });
-      }
-    };
+        peerConnection.current = pc;
 
-    pc.onnegotiationneeded = async () => {
-      if (isInitiator) {
-        try {
+        // 2. Configuration des handlers d'événements WebRTC
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate) {
+            socket?.emit('webrtc-signal', {
+              type: 'ice-candidate',
+              candidate,
+              callId: call.id,
+              targetUserId: isInitiator ? call.receiverId : call.callerId
+            });
+          }
+        };
+
+        // 3. Gestion correcte des tracks distants
+        pc.ontrack = (event) => {
+          console.log('Nouveau track reçu:', event.track.kind);
+          const remoteStream = new MediaStream();
+          event.streams[0].getTracks().forEach(track => {
+            remoteStream.addTrack(track);
+          });
+          setRemoteStream(remoteStream);
+          
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+            setIsRemoteVideoReady(true);
+          }
+        };
+
+        // 4. Obtention et configuration du flux local
+        const mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: call.type === 'VIDEO',
+          audio: true
+        });
+        setLocalStream(mediaStream);
+        
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = mediaStream;
+          setIsLocalVideoReady(true);
+        }
+
+        // 5. Ajout des tracks au peer connection
+        mediaStream.getTracks().forEach(track => {
+          pc.addTrack(track, mediaStream);
+        });
+
+        // 6. Création et envoi de l'offre si initiateur
+        if (isInitiator) {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
-          console.log('Envoi de l\'offre de négociation');
+          
           socket?.emit('webrtc-signal', {
             type: 'offer',
             sdp: offer,
             callId: call.id,
             targetUserId: call.receiverId
           });
-        } catch (err) {
-          console.error('Erreur négociation:', err);
         }
+
+      } catch (err) {
+        console.error('Erreur initialisation WebRTC:', err);
       }
     };
 
-    return pc;
-  };
+    initialize();
 
-  // Mise à jour du gestionnaire de signaux WebRTC
+    return () => {
+      isActive = false;
+      if (peerConnection.current) {
+        peerConnection.current.close();
+      }
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  // Gestion améliorée des signaux WebRTC
   useEffect(() => {
     if (!socket || !peerConnection.current) return;
 
     const handleSignal = async (data: any) => {
-      console.log('Signal WebRTC reçu:', data.type);
       const pc = peerConnection.current;
       if (!pc) return;
 
@@ -179,6 +215,7 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
             await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
+            
             socket.emit('webrtc-signal', {
               type: 'answer',
               sdp: answer,
@@ -192,7 +229,7 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
             break;
 
           case 'ice-candidate':
-            if (data.candidate) {
+            if (pc.remoteDescription && data.candidate) {
               await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
             }
             break;
@@ -204,7 +241,7 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
 
     socket.on('webrtc-signal', handleSignal);
     return () => socket.off('webrtc-signal', handleSignal);
-  }, [socket, call.id]);
+  }, [socket]);
 
   // Configurer le flux vidéo distant
   useEffect(() => {
