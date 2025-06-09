@@ -117,82 +117,84 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     
     const initialize = async () => {
       try {
-        // 1. Créer la connexion peer avec configurations ICE
+        // Configuration RTCPeerConnection améliorée
         const pc = new RTCPeerConnection({
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { 
+              urls: 'turn:your-turn-server.com:3478',
+              username: 'username',
+              credential: 'password'
+            }
+          ],
+          iceCandidatePoolSize: 10,
         });
         peerConnection.current = pc;
 
-        // 2. Amélioration de la gestion des événements WebRTC
+        // Gestion des candidats ICE
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            console.log('Envoi candidat ICE');
+            socket?.emit('webrtc-signal', {
+              type: 'ice-candidate',
+              candidate: event.candidate,
+              callId: call.id,
+              targetUserId: isInitiator ? call.receiverId : call.callerId
+            });
+          }
+        };
+
+        // Surveillance de l'état de la connexion
         pc.onconnectionstatechange = () => {
-          console.log('État de la connexion:', pc.connectionState);
+          console.log('État connexion:', pc.connectionState);
           setIsVideoConnected(pc.connectionState === 'connected');
         };
 
-        pc.oniceconnectionstatechange = () => {
-          console.log('État ICE:', pc.iceConnectionState);
-        };
-
+        // Gestion améliorée des tracks distants
         pc.ontrack = (event) => {
-          console.log('Track reçu:', event.track.kind);
-          if (!remoteStream) {
-            const newStream = new MediaStream();
-            event.streams[0].getTracks().forEach(track => {
-              newStream.addTrack(track);
-            });
-            setRemoteStream(newStream);
-            
-            if (remoteVideoRef.current) {
-              remoteVideoRef.current.srcObject = newStream;
-              setIsRemoteVideoReady(true);
-            }
+          console.log('Nouveau track reçu:', event.track.kind);
+          const [remoteStream] = event.streams;
+          setRemoteStream(remoteStream);
+          
+          if (remoteVideoRef.current && remoteStream) {
+            remoteVideoRef.current.srcObject = remoteStream;
+            setIsRemoteVideoReady(true);
           }
-
-          // Gestion des événements du track
-          event.track.onunmute = () => console.log('Track activé:', event.track.kind);
-          event.track.onmute = () => console.log('Track désactivé:', event.track.kind);
-          event.track.onended = () => console.log('Track terminé:', event.track.kind);
         };
 
-        // 3. Obtention et configuration du flux local avec gestion d'erreur
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: call.type === 'VIDEO' ? {
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          } : false,
+        // Configuration du flux local
+        const constraints = {
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true
-          }
-        });
+          },
+          video: call.type === 'VIDEO' ? {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user'
+          } : false
+        };
 
-        if (!isActive) {
-          mediaStream.getTracks().forEach(track => track.stop());
-          return;
-        }
-
+        const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
         setLocalStream(mediaStream);
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = mediaStream;
-          console.log('Flux local configuré');
-        }
 
-        // 4. Ajout des tracks avec vérification
+        // Ajout des tracks au peer connection
         mediaStream.getTracks().forEach(track => {
           console.log('Ajout track local:', track.kind);
           pc.addTrack(track, mediaStream);
         });
 
-        // 5. Création de l'offre si initiateur
+        // Si initiateur, créer et envoyer l'offre
         if (isInitiator) {
-          console.log('Création de l\'offre...');
-          const offer = await pc.createOffer();
+          const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: call.type === 'VIDEO'
+          });
           await pc.setLocalDescription(offer);
           
+          console.log('Envoi offre');
           socket?.emit('webrtc-signal', {
             type: 'offer',
             sdp: offer,
@@ -203,6 +205,7 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
 
       } catch (err) {
         console.error('Erreur initialisation WebRTC:', err);
+        onClose(); // Fermer l'appel en cas d'erreur
       }
     };
 

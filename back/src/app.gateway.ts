@@ -1,11 +1,11 @@
 import { Global, OnModuleInit } from '@nestjs/common';
 import {
-    ConnectedSocket,
-    MessageBody,
-    OnGatewayInit,
-    SubscribeMessage,
-    WebSocketGateway,
-    WebSocketServer,
+  ConnectedSocket,
+  MessageBody,
+  OnGatewayInit,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { SocketService } from './socket/socket.service';
@@ -16,11 +16,10 @@ import { CreateCallDto } from './chat/dto/create-call.dto';
 @Global()
 @WebSocketGateway({
   cors: {
-    origin: 'http://localhost:3000',
+    origin: ['http://localhost:3000', 'https://your-frontend-domain.com'],
     credentials: true,
   },
   namespace: '/',
-  port: 8020,
 })
 export class AppGateway implements OnGatewayInit, OnModuleInit {
   @WebSocketServer()
@@ -141,26 +140,41 @@ export class AppGateway implements OnGatewayInit, OnModuleInit {
   async handleWebRTCSignal(
     @MessageBody()
     data: {
-      type: 'offer' | 'answer' | 'ice-candidate';
-      data: any;
+      type: string;
+      sdp?: RTCSessionDescription;
+      candidate?: RTCIceCandidate;
       callId: string;
       targetUserId: string;
     },
     @ConnectedSocket() socket: Socket,
   ) {
-    const { type, data: signalData, callId, targetUserId } = data;
+    console.log('Signal WebRTC reçu:', data.type);
 
-    // Vérifier que l'appel est toujours actif
-    const call = await this.chatService.getCall(callId);
-    if (!call || call.status !== 'ONGOING') {
-      return;
+    try {
+      const call = await this.chatService.getCall(data.callId);
+      if (!call || call.status !== 'ONGOING') {
+        console.log('Appel non actif ou inexistant');
+        return;
+      }
+
+      // Émettre le signal au destinataire
+      this.server.to(`user_${data.targetUserId}`).emit('webrtc-signal', {
+        type: data.type,
+        sdp: data.sdp,
+        candidate: data.candidate,
+        callId: data.callId,
+        callerId: socket.data.userId,
+      });
+
+      console.log(
+        `Signal ${data.type} transmis à l'utilisateur ${data.targetUserId}`,
+      );
+    } catch (error) {
+      console.error('Erreur traitement signal WebRTC:', error);
+      socket.emit('webrtc-error', {
+        message: 'Erreur lors de la transmission du signal',
+        error: error.message,
+      });
     }
-
-    this.server.to(`user_${targetUserId}`).emit('webrtc-signal', {
-      type,
-      data: signalData,
-      callId,
-      userId: socket.data.userId,
-    });
   }
 }
