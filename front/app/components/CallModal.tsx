@@ -81,7 +81,7 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     }
   }, [remoteStream]);
 
-  // Amélioration de la signalisation WebRTC
+  // Amélioration de la gestion WebRTC
   const initializePeerConnection = () => {
     console.log('Initialisation nouvelle connexion WebRTC');
     const pc = new RTCPeerConnection({
@@ -91,114 +91,92 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
       ]
     });
 
-    // Amélioration de la gestion des tracks
+    pc.onconnectionstatechange = () => {
+      console.log('État de la connexion:', pc.connectionState);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('État ICE:', pc.iceConnectionState);
+    };
+
     pc.ontrack = (event) => {
-      console.log('Nouveau track reçu:', event.track.kind);
-      const [stream] = event.streams;
-      
-      if (!remoteStream) {
-        console.log('Configuration du flux distant initial');
-        setRemoteStream(stream);
-        
-        if (remoteVideoRef.current) {
-          console.log('Attribution du flux distant à la vidéo');
-          remoteVideoRef.current.srcObject = stream;
-        }
+      console.log('Track reçu:', event.track.kind);
+      if (event.streams && event.streams[0]) {
+        console.log('Nouveau flux distant reçu');
+        setRemoteStream(event.streams[0]);
+        setIsVideoConnected(event.track.kind === 'video');
       }
-
-      // Activer immédiatement la vidéo si c'est un track vidéo
-      if (event.track.kind === 'video') {
-        console.log('Track vidéo détecté, activation de la connexion vidéo');
-        setIsVideoConnected(true);
-      }
-
-      // Gestion des événements de track
-      event.track.onunmute = () => {
-        console.log(`Track ${event.track.kind} activé`);
-        setIsVideoConnected(true);
-      };
-
-      event.track.onended = () => {
-        console.log(`Track ${event.track.kind} terminé`);
-      };
     };
 
     return pc;
   };
 
-  // Gestion améliorée des médias locaux
   const startLocalMedia = async () => {
     try {
-      console.log('Demande accès médias avec contraintes optimisées');
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
+      const constraints = {
         video: call.type === 'VIDEO' ? {
           width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { min: 20, ideal: 30 }
+          height: { ideal: 720 }
         } : false,
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
+        audio: true
+      };
 
-      // Configure local video immediately
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = mediaStream;
-      }
-
-      return mediaStream;
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      console.log('Flux local obtenu:', stream.getTracks());
+      return stream;
     } catch (err) {
-      console.error('Erreur accès médias:', err);
+      console.error('Erreur médias:', err);
       throw err;
     }
   };
 
-  // Effect principal avec meilleure gestion de la connexion
   useEffect(() => {
-    let localMediaStream: MediaStream | null = null;
+    let cleanup = async () => {};
     
     const initialize = async () => {
       try {
-        // 1. Initialiser la connexion
+        // 1. Créer la connexion peer
         const pc = initializePeerConnection();
         peerConnection.current = pc;
 
-        // 2. Démarrer les médias locaux
-        localMediaStream = await startLocalMedia();
-        setLocalStream(localMediaStream);
-        console.log('Médias locaux initialisés');
-
-        // 3. Ajouter les tracks avec vérification
-        localMediaStream.getTracks().forEach(track => {
-          console.log(`Ajout track local: ${track.kind}`);
-          pc.addTrack(track, localMediaStream!);
+        // 2. Obtenir les médias locaux
+        const mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: call.type === 'VIDEO',
+          audio: true
         });
 
-        // 4. Gestion de la signalisation
+        console.log('Flux local obtenu:', mediaStream.getTracks());
+        setLocalStream(mediaStream);
+
+        // 3. Configurer la vidéo locale
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = mediaStream;
+          await localVideoRef.current.play();
+        }
+
+        // 4. Ajouter les tracks au peer connection
+        mediaStream.getTracks().forEach(track => {
+          pc.addTrack(track, mediaStream);
+          console.log(`Track ajouté: ${track.kind}`);
+        });
+
+        // 5. Si initiateur, créer l'offre
         if (isInitiator) {
-          console.log('Création offre comme initiateur');
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
+          console.log('Offre créée');
           
           socket?.emit('webrtc-signal', {
+            type: 'offer',
+            sdp: offer,
             callId: call.id,
-            signal: { type: 'offer', sdp: offer },
             targetUserId: call.receiverId
           });
         }
 
-        // 5. Gestion des candidats ICE
-        pc.onicecandidate = ({ candidate }) => {
-          if (candidate) {
-            console.log('Envoi candidat ICE');
-            socket?.emit('webrtc-signal', {
-              callId: call.id,
-              signal: { type: 'ice-candidate', candidate },
-              targetUserId: isInitiator ? call.receiverId : call.callerId
-            });
-          }
+        cleanup = async () => {
+          mediaStream.getTracks().forEach(track => track.stop());
+          pc.close();
         };
 
       } catch (err) {
@@ -208,117 +186,72 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
     };
 
     initialize();
-
-    // Cleanup amélioré
-    return () => {
-      console.log('Nettoyage des ressources');
-      if (localMediaStream) {
-        localMediaStream.getTracks().forEach(track => {
-          track.stop();
-          console.log(`Track ${track.kind} arrêté`);
-        });
-      }
-      if (peerConnection.current) {
-        peerConnection.current.close();
-      }
-    };
+    return () => { cleanup(); };
   }, []);
 
-  // Gestion améliorée des signaux WebRTC
+  // Gestion des signaux WebRTC
   useEffect(() => {
     if (!socket || !peerConnection.current) return;
 
     const handleSignal = async (data: any) => {
+      console.log('Signal reçu:', data.type);
       const pc = peerConnection.current;
       if (!pc) return;
 
       try {
-        console.log('Received signal:', data.signal.type);
-        
-        switch (data.signal.type) {
+        switch (data.type) {
           case 'offer':
-            console.log('Processing offer');
-            await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+            console.log('Traitement offre');
+            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
             
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             
             socket.emit('webrtc-signal', {
+              type: 'answer',
+              sdp: answer,
               callId: call.id,
-              signal: { type: 'answer', sdp: answer },
               targetUserId: isInitiator ? call.receiverId : call.callerId
             });
             break;
 
           case 'answer':
-            console.log('Processing answer');
-            await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+            console.log('Traitement réponse');
+            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
             break;
 
           case 'ice-candidate':
+            console.log('Ajout candidat ICE');
             if (pc.remoteDescription) {
-              console.log('Adding ICE candidate');
-              await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+              await pc.addIceCandidate(data.candidate);
             }
             break;
         }
       } catch (err) {
-        console.error('Signal processing error:', err);
+        console.error('Erreur signal:', err);
       }
     };
 
-    console.log('Setting up WebRTC signal handler');
     socket.on('webrtc-signal', handleSignal);
-    
-    return () => {
-      console.log('Cleaning up WebRTC signal handler');
-      socket.off('webrtc-signal', handleSignal);
-    };
+    return () => socket.off('webrtc-signal', handleSignal);
   }, [socket]);
 
-  // Vérification périodique des tracks
+  // Configurer le flux vidéo distant
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (localStream) {
-        console.log('État tracks locaux:', {
-          video: localStream.getVideoTracks().map(t => ({
-            enabled: t.enabled,
-            muted: t.muted
-          })),
-          audio: localStream.getAudioTracks().map(t => ({
-            enabled: t.enabled,
-            muted: t.muted
-          }))
-        });
-      }
-      if (remoteStream) {
-        console.log('État tracks distants:', {
-          video: remoteStream.getVideoTracks().map(t => ({
-            enabled: t.enabled,
-            muted: t.muted
-          })),
-          audio: remoteStream.getAudioTracks().map(t => ({
-            enabled: t.enabled,
-            muted: t.muted
-          }))
-        });
-      }
-    }, 5000);
+    if (remoteStream && remoteVideoRef.current) {
+      console.log('Configuration vidéo distante');
+      remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play().catch(err => {
+        console.error('Erreur lecture vidéo distante:', err);
+      });
+    }
+  }, [remoteStream]);
 
-    return () => clearInterval(interval);
-  }, [localStream, remoteStream]);
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  // Amélioration des contrôles audio
+  // Contrôles audio
   const toggleMute = () => {
     if (localStream) {
       localStream.getAudioTracks().forEach(track => {
-        track.enabled = isMuted;
+        track.enabled = !track.enabled;
         console.log('Audio local:', track.enabled ? 'actif' : 'muet');
       });
       setIsMuted(!isMuted);
@@ -326,13 +259,8 @@ export const CallModal = ({ call, onClose }: CallModalProps) => {
   };
 
   const toggleSpeaker = () => {
-    if (remoteStream) {
-      remoteStream.getAudioTracks().forEach(track => {
-        track.enabled = !isSpeakerOn;
-      });
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.muted = !isSpeakerOn;
-      }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.muted = !remoteVideoRef.current.muted;
       setIsSpeakerOn(!isSpeakerOn);
     }
   };
